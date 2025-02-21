@@ -1,1 +1,30 @@
+# Node modules
+node_modules/
+
+# Entornos
 .env
+
+# Logs
+logs/
+*.log
+
+# Dependencias del sistema
+.DS_Store
+Thumbs.db
+
+# Salidas de compilación
+dist/
+build/
+
+# Archivos de configuración del editor
+.vscode/
+.idea/
+
+# Archivos temporales
+*.tmp
+*.swp
+
+# Coverage de tests
+coverage/
+
+# Archivos específicos de
