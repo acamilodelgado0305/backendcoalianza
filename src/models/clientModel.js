@@ -14,23 +14,30 @@ const clientSchema = new mongoose.Schema(
     numeroDeDocumento: {
       type: Number,
       required: [true, 'El número de documento es obligatorio'],
-      unique: true, // Asegura que no haya duplicados
+      unique: true,
     },
     fechaVencimiento: {
       type: Date,
       default: function () {
         const currentDate = new Date();
-        currentDate.setFullYear(currentDate.getFullYear() + 1); // Sumar 1 año
+        currentDate.setFullYear(currentDate.getFullYear() + 1);
         return currentDate;
       },
     },
     tipo: {
-      type: [String], // Campo tipo como un array de strings
-      default: [],    // Valor predeterminado: array vacío
+      type: [String],
+      default: [],
+    },
+    // Nuevo campo agregado
+    vendedor: {
+      type: String,
+      required: [true, 'El vendedor es obligatorio'],
+      trim: true, // Elimina espacios al inicio y final
+      maxlength: [50, 'El nombre del vendedor no puede superar 50 caracteres']
     },
   },
   {
-    timestamps: true, // Agrega createdAt y updatedAt automáticamente
+    timestamps: true,
   }
 );
 

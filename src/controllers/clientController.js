@@ -3,7 +3,7 @@ import Client from "../models/clientModel.js";
 // Crear un nuevo cliente
 export const createClient = async (req, res) => {
   try {
-    const { nombre, apellido, numeroDeDocumento, tipo } = req.body;
+    const { nombre, apellido, numeroDeDocumento, tipo, vendedor } = req.body;
 
     // Validación para asegurarse de que numeroDeDocumento no esté vacío ni nulo
     if (
@@ -25,6 +25,7 @@ export const createClient = async (req, res) => {
       nombre,
       apellido,
       numeroDeDocumento,
+      vendedor,
       tipo: Array.isArray(tipo) ? tipo : [], // Asegura que tipo sea un array
     });
 
