@@ -45,12 +45,10 @@ const clientSchema = new mongoose.Schema(
     },
     valor: {
       type: Number,
-      required: [true, 'El valor es obligatorio'],
       min: [0, 'El valor no puede ser negativo'],
     },
     cuenta: {
       type: String,
-      required: [true, 'La cuenta es obligatoria'],
       enum: {
         values: ['Nequi', 'Daviplata', 'Bancolombia'],
         message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia',

@@ -84,8 +84,16 @@ export const getClientByNumeroDeDocumento = async (req, res) => {
       return res.status(400).json({ message: 'El número de documento no es válido' });
     }
 
-    // Buscar cliente por número de documento
-    const client = await Client.findOne({ numeroDeDocumento });
+    // Normalizar el número de documento
+    const normalizedNumero = numeroDeDocumento.trim().toLowerCase();
+
+    // Buscar cliente por número de documento (insensible a mayúsculas)
+    const client = await Client.findOne({ 
+      numeroDeDocumento: normalizedNumero 
+    }).collation({ locale: 'en', strength: 2 });
+
+    // Depuración: Mostrar el resultado de la consulta
+    console.log('Cliente encontrado:', client);
 
     if (!client) {
       return res.status(404).json({ message: 'Cliente no encontrado' });
