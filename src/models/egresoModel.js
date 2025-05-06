@@ -28,6 +28,12 @@ const egresoSchema = new mongoose.Schema(
       trim: true,
       maxlength: [500, 'La descripción no puede superar 500 caracteres'],
     },
+    vendedor: {
+        type: String,
+        required: [true, 'El vendedor es obligatorio'],
+        trim: true,
+        maxlength: [50, 'El nombre del vendedor no puede superar 50 caracteres'],
+      }
   },
   {
     timestamps: true, // Agrega createdAt y updatedAt automáticamente

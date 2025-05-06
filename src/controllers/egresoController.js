@@ -3,47 +3,43 @@ import Egreso from "../models/egresoModel.js";
 // Crear un nuevo egreso
 export const createEgreso = async (req, res) => {
   try {
-    const { fecha, valor, cuenta, descripcion } = req.body;
+    const { fecha, valor, cuenta, descripcion, vendedor } = req.body;
 
-    // Validación de campos requeridos
-    if (!fecha || !valor || !cuenta || !descripcion) {
+    if (!fecha || !valor || !cuenta || !descripcion || !vendedor) {
       return res.status(400).json({ message: 'Todos los campos son obligatorios' });
     }
 
-    // Validar que fecha sea una fecha válida
     const parsedFecha = new Date(fecha);
     if (isNaN(parsedFecha.getTime())) {
       return res.status(400).json({ message: 'La fecha no es válida' });
     }
 
-    // Validar que valor sea un número positivo
     if (typeof valor !== 'number' || valor < 0) {
       return res.status(400).json({ message: 'El valor debe ser un número positivo' });
     }
 
-    // Validar que cuenta sea un valor válido
     const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
     if (!validCuentas.includes(cuenta)) {
       return res.status(400).json({ message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia' });
     }
 
-    // Validar que descripcion sea una cadena no vacía
     if (typeof descripcion !== 'string' || descripcion.trim() === '') {
       return res.status(400).json({ message: 'La descripción no es válida' });
     }
 
-    // Crear el nuevo egreso
+    if (typeof vendedor !== 'string' || vendedor.trim() === '' || vendedor.length > 50) {
+      return res.status(400).json({ message: 'El nombre del vendedor no es válido' });
+    }
+
     const newEgreso = new Egreso({
       fecha: parsedFecha,
       valor,
       cuenta,
       descripcion: descripcion.trim(),
+      vendedor: vendedor.trim(),
     });
 
-    // Guardar el egreso en la base de datos
     await newEgreso.save();
-
-    // Responder con el egreso creado
     res.status(201).json(newEgreso);
   } catch (error) {
     console.error('Error al crear el egreso:', error);
@@ -54,7 +50,7 @@ export const createEgreso = async (req, res) => {
 // Obtener todos los egresos
 export const getEgresos = async (req, res) => {
   try {
-    const egresos = await Egreso.find(); // Obtener todos los egresos de la base de datos
+    const egresos = await Egreso.find();
     res.status(200).json(egresos);
   } catch (error) {
     console.error('Error al obtener los egresos:', error);
@@ -66,13 +62,10 @@ export const getEgresos = async (req, res) => {
 export const getEgresoById = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Buscar egreso por ID
     const egreso = await Egreso.findById(id);
     if (!egreso) {
       return res.status(404).json({ message: 'Egreso no encontrado' });
     }
-
     res.status(200).json(egreso);
   } catch (error) {
     console.error('Error al obtener el egreso:', error);
@@ -84,15 +77,13 @@ export const getEgresoById = async (req, res) => {
 export const updateEgreso = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fecha, valor, cuenta, descripcion } = req.body;
+    const { fecha, valor, cuenta, descripcion, vendedor } = req.body;
 
-    // Buscar el egreso por ID
     const egreso = await Egreso.findById(id);
     if (!egreso) {
       return res.status(404).json({ message: 'Egreso no encontrado' });
     }
 
-    // Validar y actualizar fecha si se proporciona
     if (fecha) {
       const parsedFecha = new Date(fecha);
       if (isNaN(parsedFecha.getTime())) {
@@ -101,7 +92,6 @@ export const updateEgreso = async (req, res) => {
       egreso.fecha = parsedFecha;
     }
 
-    // Validar y actualizar valor si se proporciona
     if (valor !== undefined) {
       if (typeof valor !== 'number' || valor < 0) {
         return res.status(400).json({ message: 'El valor debe ser un número positivo' });
@@ -109,7 +99,6 @@ export const updateEgreso = async (req, res) => {
       egreso.valor = valor;
     }
 
-    // Validar y actualizar cuenta si se proporciona
     if (cuenta) {
       const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
       if (!validCuentas.includes(cuenta)) {
@@ -118,7 +107,6 @@ export const updateEgreso = async (req, res) => {
       egreso.cuenta = cuenta;
     }
 
-    // Validar y actualizar descripcion si se proporciona
     if (descripcion) {
       if (typeof descripcion !== 'string' || descripcion.trim() === '') {
         return res.status(400).json({ message: 'La descripción no es válida' });
@@ -126,7 +114,13 @@ export const updateEgreso = async (req, res) => {
       egreso.descripcion = descripcion.trim();
     }
 
-    // Guardar los cambios en la base de datos
+    if (vendedor) {
+      if (typeof vendedor !== 'string' || vendedor.trim() === '' || vendedor.length > 50) {
+        return res.status(400).json({ message: 'El nombre del vendedor no es válido' });
+      }
+      egreso.vendedor = vendedor.trim();
+    }
+
     await egreso.save();
     res.status(200).json(egreso);
   } catch (error) {
@@ -139,8 +133,6 @@ export const updateEgreso = async (req, res) => {
 export const deleteEgreso = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // Buscar y eliminar el egreso por ID
     const egreso = await Egreso.findByIdAndDelete(id);
     if (!egreso) {
       return res.status(404).json({ message: 'Egreso no encontrado' });
