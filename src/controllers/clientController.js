@@ -6,7 +6,7 @@ export const createClient = async (req, res) => {
     const { nombre, apellido, numeroDeDocumento, tipo, vendedor, valor, cuenta } = req.body;
 
     // Validación de campos requeridos
-    if (!nombre || !apellido || !numeroDeDocumento || !vendedor || !valor || !cuenta) {
+    if (!nombre  || !numeroDeDocumento || !vendedor || !valor || !cuenta) {
       return res.status(400).json({ message: 'Todos los campos son obligatorios' });
     }
 
