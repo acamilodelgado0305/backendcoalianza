@@ -29,14 +29,13 @@ const clientSchema = new mongoose.Schema(
         return currentDate;
       },
     },
+
     tipo: {
       type: [String],
+      required: [true, 'Debe proporcionar al menos un concepto o servicio.'], // Es buena idea mantenerlo requerido
       default: [],
-      enum: {
-        values: ['Manipulación de alimentos', 'Aseo Hospitalario'],
-        message: 'El tipo de certificado no es válido',
-      },
     },
+
     vendedor: {
       type: String,
       required: [true, 'El vendedor es obligatorio'],

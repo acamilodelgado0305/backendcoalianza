@@ -21,12 +21,8 @@ export const createClient = async (req, res) => {
     }
 
     // Validar que tipo sea un array y contenga valores válidos
-    if (!Array.isArray(tipo) || tipo.length === 0) {
-      return res.status(400).json({ message: 'Debe proporcionar al menos un tipo de certificado válido' });
-    }
-    const validTipos = ['Manipulación de alimentos', 'Aseo Hospitalario'];
-    if (!tipo.every((t) => validTipos.includes(t))) {
-      return res.status(400).json({ message: 'Uno o más tipos de certificado no son válidos' });
+    if (!Array.isArray(tipo) || tipo.length === 0 || !tipo.every(t => typeof t === 'string' && t.trim() !== '')) {
+      return res.status(400).json({ message: 'El campo "tipo" debe ser un arreglo con al menos un concepto o servicio válido.' });
     }
 
     // Validar que cuenta sea un valor válido
@@ -88,8 +84,8 @@ export const getClientByNumeroDeDocumento = async (req, res) => {
     const normalizedNumero = numeroDeDocumento.trim().toLowerCase();
 
     // Buscar cliente por número de documento (insensible a mayúsculas)
-    const client = await Client.findOne({ 
-      numeroDeDocumento: normalizedNumero 
+    const client = await Client.findOne({
+      numeroDeDocumento: normalizedNumero
     }).collation({ locale: 'en', strength: 2 });
 
     // Depuración: Mostrar el resultado de la consulta
