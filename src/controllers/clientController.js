@@ -106,63 +106,52 @@ export const getClientByNumeroDeDocumento = async (req, res) => {
 export const updateClient = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, apellido, numeroDeDocumento, tipo, vendedor, valor, cuenta } = req.body;
+    const updateData = req.body; // Tomamos todos los datos que vienen en el body
 
-    // Buscar el cliente por ID
-    const client = await Client.findById(id);
-    if (!client) {
+    // 1. ÚNICA VALIDACIÓN MANUAL NECESARIA: El documento único
+    // Esta lógica es correcta y debe permanecer, ya que compara con otros documentos.
+    if (updateData.numeroDeDocumento) {
+      const existingClient = await Client.findOne({ 
+        numeroDeDocumento: updateData.numeroDeDocumento, 
+        _id: { $ne: id } 
+      });
+
+      if (existingClient) {
+        return res.status(400).json({ message: 'El número de documento ya está registrado en otro cliente' });
+      }
+    }
+
+    // 2. ACTUALIZACIÓN ATÓMICA CON VALIDACIÓN AUTOMÁTICA
+    // Mongoose se encargará de validar 'nombre', 'apellido', 'valor', 'cuenta', etc.,
+    // según las reglas de tu schema.
+    const updatedClient = await Client.findByIdAndUpdate(
+      id,
+      { $set: updateData }, // Usamos $set para actualizar solo los campos enviados
+      { 
+        new: true,           // Devuelve el documento ya actualizado
+        runValidators: true, // ¡La clave! Ejecuta las validaciones del schema
+        context: 'query'     // Necesario para que algunas validaciones funcionen en updates
+      }
+    );
+
+    if (!updatedClient) {
       return res.status(404).json({ message: 'Cliente no encontrado' });
     }
 
-    // Validar numeroDeDocumento si se proporciona
-    if (numeroDeDocumento && numeroDeDocumento.trim() !== '') {
-      const existingClient = await Client.findOne({ numeroDeDocumento, _id: { $ne: id } });
-      if (existingClient) {
-        return res.status(400).json({ message: 'El número de documento ya está registrado' });
-      }
-      client.numeroDeDocumento = numeroDeDocumento.trim();
-    }
+    res.status(200).json({
+      message: 'Cliente actualizado exitosamente',
+      client: updatedClient
+    });
 
-    // Validar tipo si se proporciona
-    if (tipo) {
-      if (!Array.isArray(tipo) || tipo.length === 0) {
-        return res.status(400).json({ message: 'Debe proporcionar al menos un tipo de certificado válido' });
-      }
-      const validTipos = ['Manipulación de alimentos', 'Aseo Hospitalario'];
-      if (!tipo.every((t) => validTipos.includes(t))) {
-        return res.status(400).json({ message: 'Uno o más tipos de certificado no son válidos' });
-      }
-      client.tipo = tipo;
-    }
-
-    // Validar valor si se proporciona
-    if (valor !== undefined) {
-      if (typeof valor !== 'number' || valor < 0) {
-        return res.status(400).json({ message: 'El valor debe ser un número positivo' });
-      }
-      client.valor = valor;
-    }
-
-    // Validar cuenta si se proporciona
-    if (cuenta) {
-      const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
-      if (!validCuentas.includes(cuenta)) {
-        return res.status(400).json({ message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia' });
-      }
-      client.cuenta = cuenta;
-    }
-
-    // Actualizar los datos del cliente
-    client.nombre = nombre ? nombre.trim() : client.nombre;
-    client.apellido = apellido ? apellido.trim() : client.apellido;
-    client.vendedor = vendedor ? vendedor.trim() : client.vendedor;
-
-    // Guardar los cambios en la base de datos
-    await client.save();
-    res.status(200).json(client);
   } catch (error) {
     console.error('Error al actualizar el cliente:', error);
-    res.status(500).json({ message: 'Error al actualizar el cliente', error: error.message });
+    
+    // Error de validación de Mongoose
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: 'Datos inválidos', errors: error.errors });
+    }
+
+    res.status(500).json({ message: 'Error interno del servidor', error: error.message });
   }
 };
 

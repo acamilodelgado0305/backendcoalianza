@@ -77,57 +77,44 @@ export const getEgresoById = async (req, res) => {
 export const updateEgreso = async (req, res) => {
   try {
     const { id } = req.params;
-    const { fecha, valor, cuenta, descripcion, vendedor } = req.body;
+    const updateData = req.body;
 
-    const egreso = await Egreso.findById(id);
-    if (!egreso) {
+    // A diferencia de 'Client', aquí no hay campos únicos que validar contra
+    // otros documentos, por lo que podemos proceder directamente a la actualización.
+
+    const updatedEgreso = await Egreso.findByIdAndUpdate(
+      id,
+      { $set: updateData }, // Actualiza solo los campos que vienen en el body
+      { 
+        new: true,           // Opción para que retorne el documento ya modificado
+        runValidators: true, // ¡La clave! Ejecuta las validaciones del schema (enum, min, required, etc.)
+        context: 'query'     // Necesario para que ciertas validaciones se ejecuten correctamente en updates
+      }
+    );
+
+    // Si el 'updatedEgreso' es null, significa que no se encontró un documento con ese ID
+    if (!updatedEgreso) {
       return res.status(404).json({ message: 'Egreso no encontrado' });
     }
 
-    if (fecha) {
-      const parsedFecha = new Date(fecha);
-      if (isNaN(parsedFecha.getTime())) {
-        return res.status(400).json({ message: 'La fecha no es válida' });
-      }
-      egreso.fecha = parsedFecha;
-    }
+    res.status(200).json({
+      message: 'Egreso actualizado exitosamente',
+      egreso: updatedEgreso
+    });
 
-    if (valor !== undefined) {
-      if (typeof valor !== 'number' || valor < 0) {
-        return res.status(400).json({ message: 'El valor debe ser un número positivo' });
-      }
-      egreso.valor = valor;
-    }
-
-    if (cuenta) {
-      const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
-      if (!validCuentas.includes(cuenta)) {
-        return res.status(400).json({ message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia' });
-      }
-      egreso.cuenta = cuenta;
-    }
-
-    if (descripcion) {
-      if (typeof descripcion !== 'string' || descripcion.trim() === '') {
-        return res.status(400).json({ message: 'La descripción no es válida' });
-      }
-      egreso.descripcion = descripcion.trim();
-    }
-
-    if (vendedor) {
-      if (typeof vendedor !== 'string' || vendedor.trim() === '' || vendedor.length > 50) {
-        return res.status(400).json({ message: 'El nombre del vendedor no es válido' });
-      }
-      egreso.vendedor = vendedor.trim();
-    }
-
-    await egreso.save();
-    res.status(200).json(egreso);
   } catch (error) {
     console.error('Error al actualizar el egreso:', error);
-    res.status(500).json({ message: 'Error al actualizar el egreso', error: error.message });
+    
+    // Si el error es por una validación de Mongoose (ej: un 'enum' incorrecto)
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ message: 'Datos inválidos', errors: error.errors });
+    }
+
+    // Para cualquier otro tipo de error
+    res.status(500).json({ message: 'Error interno del servidor', error: error.message });
   }
 };
+
 
 // Eliminar un egreso por su ID
 export const deleteEgreso = async (req, res) => {

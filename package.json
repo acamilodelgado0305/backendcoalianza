@@ -4,8 +4,8 @@
   "type": "module",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js", 
-    "start:dev": "nodemon src/app.js",
+    "start": "TZ=UTC node src/app.js", 
+    "start:dev": "TZ=UTC nodemon src/app.js",
     "vercel-build": "echo 'No build required'" 
   },
   "keywords": [],
