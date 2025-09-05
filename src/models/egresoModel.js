@@ -16,10 +16,6 @@ const egresoSchema = new mongoose.Schema(
     cuenta: {
       type: String,
       required: [true, 'La cuenta es obligatoria'],
-      enum: {
-        values: ['Nequi', 'Daviplata', 'Bancolombia'],
-        message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia',
-      },
       trim: true,
     },
     descripcion: {

@@ -18,10 +18,7 @@ export const createEgreso = async (req, res) => {
       return res.status(400).json({ message: 'El valor debe ser un número positivo' });
     }
 
-    const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
-    if (!validCuentas.includes(cuenta)) {
-      return res.status(400).json({ message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia' });
-    }
+
 
     if (typeof descripcion !== 'string' || descripcion.trim() === '') {
       return res.status(400).json({ message: 'La descripción no es válida' });
