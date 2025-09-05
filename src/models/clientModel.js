@@ -5,19 +5,19 @@ const clientSchema = new mongoose.Schema(
   {
     nombre: {
       type: String,
-      required: [true, 'El nombre es obligatorio'],
+     
       trim: true,
       maxlength: [100, 'El nombre no puede superar 100 caracteres'],
     },
     apellido: {
       type: String,
-      required: [true, 'El apellido es obligatorio'],
+      
       trim: true,
       maxlength: [100, 'El apellido no puede superar 100 caracteres'],
     },
     numeroDeDocumento: {
       type: String, // Cambiado a String para mayor flexibilidad (puede incluir letras o guiones)
-      required: [true, 'El número de documento es obligatorio'],
+     
       unique: true,
       trim: true,
     },
@@ -48,10 +48,7 @@ const clientSchema = new mongoose.Schema(
     },
     cuenta: {
       type: String,
-      enum: {
-        values: ['Nequi', 'Daviplata', 'Bancolombia'],
-        message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia',
-      },
+      
       trim: true,
     },
   },
