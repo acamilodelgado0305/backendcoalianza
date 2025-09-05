@@ -6,7 +6,7 @@ export const createClient = async (req, res) => {
     const { nombre, apellido, numeroDeDocumento, tipo, vendedor, valor, cuenta } = req.body;
 
     // Validación de campos requeridos
-    if (!nombre  || !numeroDeDocumento || !vendedor || !valor || !cuenta) {
+    if (!vendedor || !valor || !cuenta) {
       return res.status(400).json({ message: 'Todos los campos son obligatorios' });
     }
 
@@ -29,10 +29,7 @@ export const createClient = async (req, res) => {
    
 
     // Verificar si el número de documento ya existe
-    const existingClient = await Client.findOne({ numeroDeDocumento });
-    if (existingClient) {
-      return res.status(400).json({ message: 'El número de documento ya está registrado' });
-    }
+  
 
     // Crear el nuevo cliente
     const newClient = new Client({
