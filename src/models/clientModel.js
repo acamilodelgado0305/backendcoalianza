@@ -17,8 +17,6 @@ const clientSchema = new mongoose.Schema(
     },
     numeroDeDocumento: {
       type: String, // Cambiado a String para mayor flexibilidad (puede incluir letras o guiones)
-     
-      unique: true,
       trim: true,
     },
     fechaVencimiento: {
