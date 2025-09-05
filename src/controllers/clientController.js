@@ -26,10 +26,7 @@ export const createClient = async (req, res) => {
     }
 
     // Validar que cuenta sea un valor válido
-    const validCuentas = ['Nequi', 'Daviplata', 'Bancolombia'];
-    if (!validCuentas.includes(cuenta)) {
-      return res.status(400).json({ message: 'La cuenta debe ser Nequi, Daviplata o Bancolombia' });
-    }
+   
 
     // Verificar si el número de documento ya existe
     const existingClient = await Client.findOne({ numeroDeDocumento });
