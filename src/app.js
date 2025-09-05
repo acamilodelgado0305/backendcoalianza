@@ -25,7 +25,7 @@ import egresoRoutes from './routes/egresoRouter.js';
 dotenv.config();
 
 
-
+const PORT = process.env.PORT || 3001;
 const app = express();
 
 
@@ -71,17 +71,16 @@ app.use('/api/v1/egresos', egresoRoutes);
 // Conectar a la base de datos
 
 connectDB()
-
-  .then(() => console.log('✅ Conexión exitosa a MongoDB Atlas'))
-
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`✅ Servidor escuchando en el puerto ${PORT}`);
+    });
+    console.log('✅ Conexión exitosa a MongoDB Atlas');
+  })
   .catch(error => {
-
     console.error('❌ Error al conectar a MongoDB:', error);
-
     process.exit(1);
-
   });
-
 
 
 // ❌ Elimina app.listen() porque Vercel no lo usa

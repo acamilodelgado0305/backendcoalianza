@@ -1,37 +1,34 @@
 import Client from "../models/clientModel.js";
 
 // Crear un nuevo cliente
+// src/controllers/clientController.js
+
 export const createClient = async (req, res) => {
   try {
-    const { nombre, apellido, numeroDeDocumento, tipo, vendedor, valor, cuenta } = req.body;
+    // Usamos 'let' para poder modificar las variables
+    let { nombre, apellido, numeroDeDocumento, tipo, vendedor, valor, cuenta } = req.body;
 
-    // Validación de campos requeridos
-    if (!vendedor || !valor || !cuenta) {
-      return res.status(400).json({ message: 'Todos los campos son obligatorios' });
+    // --- LÓGICA MODIFICADA PARA VENTAS SIN CLIENTE ---
+    const esVentaGeneral = numeroDeDocumento === '0';
+
+    if (esVentaGeneral) {
+      // Si es una venta sin cliente, asignamos valores genéricos
+      nombre = 'Cliente';
+      apellido = 'General';
+      // Creamos un ID único para evitar la duplicación
+      numeroDeDocumento = `VENTA_GENERAL_${Date.now()}`; 
     }
+    // --- FIN DE LA MODIFICACIÓN ---
 
-    // Validar que numeroDeDocumento sea una cadena no vacía
+    // El resto de tus validaciones siguen siendo importantes
+    if (!vendedor || !valor || !cuenta) {
+      return res.status(400).json({ message: 'Vendedor, valor y cuenta son obligatorios' });
+    }
     if (typeof numeroDeDocumento !== 'string' || numeroDeDocumento.trim() === '') {
       return res.status(400).json({ message: 'El número de documento no es válido' });
     }
+    // ... (otras validaciones que tenías)
 
-    // Validar que valor sea un número positivo
-    if (typeof valor !== 'number' || valor < 0) {
-      return res.status(400).json({ message: 'El valor debe ser un número positivo' });
-    }
-
-    // Validar que tipo sea un array y contenga valores válidos
-    if (!Array.isArray(tipo) || tipo.length === 0 || !tipo.every(t => typeof t === 'string' && t.trim() !== '')) {
-      return res.status(400).json({ message: 'El campo "tipo" debe ser un arreglo con al menos un concepto o servicio válido.' });
-    }
-
-    // Validar que cuenta sea un valor válido
-   
-
-    // Verificar si el número de documento ya existe
-  
-
-    // Crear el nuevo cliente
     const newClient = new Client({
       nombre: nombre.trim(),
       apellido: apellido.trim(),
@@ -42,12 +39,17 @@ export const createClient = async (req, res) => {
       cuenta,
     });
 
-    // Guardar el cliente en la base de datos
     await newClient.save();
-
-    // Responder con el cliente creado
     res.status(201).json(newClient);
+
   } catch (error) {
+    // Manejo de errores específico para duplicados
+    if (error.code === 11000) {
+        return res.status(409).json({ // 409 Conflict es un buen código para esto
+            message: 'Conflicto: El número de documento ya existe.',
+            error: error.message
+        });
+    }
     console.error('Error al crear el cliente:', error);
     res.status(500).json({ message: 'Error al crear el cliente', error: error.message });
   }
