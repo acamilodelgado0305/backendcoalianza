@@ -62,9 +62,9 @@ app.get('/health', (req, res) => {
 
 // Rutas principales
 
-app.use('/api/v1/clients', clientRoutes);
+app.use('/api/clients', clientRoutes);
 
-app.use('/api/v1/egresos', egresoRoutes);
+app.use('/api/egresos', egresoRoutes);
 
 
 
