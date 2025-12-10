@@ -9,6 +9,7 @@ import { dirname } from 'path';
 import connectDB from './database.js';
 import ingresoRoutes from './routes/ingresoRoutes.js';
 import egresoRoutes from './routes/egresoRoutes.js';
+import clientRoutes from './routes/clientRoutes.js';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.get('/health', (req, res) => {
 // Rutas principales
 app.use('/api/ingresos', ingresoRoutes);
 app.use('/api/egresos', egresoRoutes);
+app.use('/api', clientRoutes);
 
 // Conectar a la base de datos
 
