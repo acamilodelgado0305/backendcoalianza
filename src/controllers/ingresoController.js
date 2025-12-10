@@ -114,3 +114,101 @@ export const getIngresosByUsuario = async (req, res) => {
     });
   }
 };
+
+
+
+export const updateIngreso = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { id } = req.params;
+        const {
+            nombre,
+            apellido,
+            numeroDeDocumento,
+            valor,
+            cuenta,
+            tipo, // Array desde el frontend
+            customer_email
+        } = req.body;
+
+        // Validar existencia primero
+        const checkQuery = `SELECT * FROM "public"."ingresos" WHERE "_id" = $1`;
+        const checkResult = await client.query(checkQuery, [id]);
+
+        if (checkResult.rows.length === 0) {
+            return res.status(404).json({ message: "Ingreso no encontrado para actualizar" });
+        }
+
+        // Procesar array a string
+        let productoStr = '';
+        if (Array.isArray(tipo)) {
+            productoStr = tipo.join(', ');
+        } else {
+            productoStr = tipo || checkResult.rows[0].producto; // Mantener anterior si no llega
+        }
+
+        const updatedAt = new Date().toISOString();
+
+        const updateQuery = `
+            UPDATE "public"."ingresos"
+            SET 
+                "nombre" = $1,
+                "apellido" = $2,
+                "numeroDeDocumento" = $3,
+                "valor" = $4,
+                "cuenta" = $5,
+                "producto" = $6,
+                "customer_email" = $7,
+                "updatedAt" = $8
+            WHERE "_id" = $9
+            RETURNING *;
+        `;
+
+        const values = [
+            nombre,
+            apellido,
+            numeroDeDocumento,
+            String(valor),
+            cuenta,
+            productoStr,
+            customer_email,
+            updatedAt,
+            id
+        ];
+
+        await client.query('BEGIN');
+        const result = await client.query(updateQuery, values);
+        await client.query('COMMIT');
+
+        return res.status(200).json({ message: "Ingreso actualizado", data: result.rows[0] });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Error actualizando ingreso:", error);
+        return res.status(500).json({ message: "Error al actualizar", error: error.message });
+    } finally {
+        client.release();
+    }
+};
+
+// ==========================================
+// 5. ELIMINAR INGRESO (DELETE)
+// ==========================================
+export const deleteIngreso = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const query = `DELETE FROM "public"."ingresos" WHERE "_id" = $1 RETURNING *`;
+        const result = await pool.query(query, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: "Ingreso no encontrado para eliminar" });
+        }
+
+        return res.status(200).json({ message: "Ingreso eliminado correctamente" });
+
+    } catch (error) {
+        console.error("Error eliminando ingreso:", error);
+        return res.status(500).json({ message: "Error al eliminar", error: error.message });
+    }
+};
