@@ -2,11 +2,11 @@
   "name": "backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "src/app.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "TZ=UTC node src/app.js", 
-    "start:dev": " nodemon src/app.js",
-    "vercel-build": "echo 'No build required'" 
+    "start": "TZ=UTC node src/index.js",
+    "start:dev": " nodemon src/index.js",
+    "vercel-build": "echo 'No build required'"
   },
   "keywords": [],
   "author": "",
@@ -19,9 +19,12 @@
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.3",
     "mongodb": "^6.10.0",
     "mongoose": "^8.8.1",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "pg": "^8.16.3",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"

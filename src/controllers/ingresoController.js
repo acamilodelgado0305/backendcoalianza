@@ -1,0 +1,116 @@
+// src/controllers/ingresoController.js
+import pool from "../database.js";
+
+// Crear un nuevo ingreso
+import { v4 as uuidv4 } from 'uuid'; // Importamos la librería UUID
+
+export const createIngreso = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const {
+      nombre,
+      apellido,
+      numeroDeDocumento,
+      valor,
+      cuenta,
+      tipo, // En el front se llama 'tipo', en la DB 'producto'
+      customer_email
+    } = req.body;
+
+    const usuarioId = req.user?.id; // Asumiendo que usas un middleware de auth
+
+    // Validaciones básicas
+    if (!usuarioId) return res.status(401).json({ message: "Usuario no autenticado" });
+    if (!valor || !cuenta) return res.status(400).json({ message: "Valor y cuenta son obligatorios" });
+
+    // 1. Preparar datos
+    const _id = uuidv4();
+    const createdAt = new Date();
+
+    // Lógica: Fecha de vencimiento 1 año después (según patrones de tu SQL)
+    const fechaVencimiento = new Date(createdAt);
+    fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+
+    const payment_reference = `POS-${Date.now()}`;
+    const payment_status = 'APPROVED';
+
+    // 2. Manejo de Productos (Array a String)
+    let productoStr = '';
+    if (Array.isArray(tipo)) {
+      productoStr = tipo.join(', ');
+    } else {
+      productoStr = tipo || 'General';
+    }
+
+    // 3. Query SQL optimizada
+    const query = `
+      INSERT INTO "public"."ingresos" (
+        "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+        "producto", "valor", "cuenta", "customer_email", "payment_status",
+        "payment_reference", "usuario", "createdAt", "updatedAt", "__v"
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING *;
+    `;
+
+    const values = [
+      _id,
+      nombre || 'Cliente',
+      apellido || 'General',
+      numeroDeDocumento || '0',
+      fechaVencimiento.toISOString(),
+      productoStr,
+      String(valor), // Tu DB espera 'text' para valor
+      cuenta,
+      customer_email || '',
+      payment_status,
+      payment_reference,
+      usuarioId,
+      createdAt.toISOString(),
+      createdAt.toISOString(), // updatedAt igual al created al inicio
+      '0' // __v
+    ];
+
+    await client.query('BEGIN');
+    const result = await client.query(query, values);
+    await client.query('COMMIT');
+
+    return res.status(201).json(result.rows[0]);
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error al crear el ingreso:", error);
+    return res.status(500).json({ message: "Error interno al crear el ingreso", error: error.message });
+  } finally {
+    client.release();
+  }
+};
+
+// ✅ Obtener ingresos del usuario logueado
+export const getIngresosByUsuario = async (req, res) => {
+  try {
+    const usuarioId = req.user?.id;
+
+    if (!usuarioId) {
+      return res.status(401).json({ message: "Usuario no autenticado" });
+    }
+
+    const query = `
+      SELECT *
+      FROM ingresos
+      WHERE usuario = $1
+      ORDER BY "fechaVencimiento" DESC NULLS LAST, "createdAt" DESC NULLS LAST;
+    `;
+
+    const result = await pool.query(query, [usuarioId]);
+
+    return res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error al obtener los ingresos del usuario:", error);
+    return res.status(500).json({
+      message: "Error al obtener los ingresos del usuario",
+      error: error.message,
+    });
+  }
+};
