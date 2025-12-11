@@ -87,6 +87,102 @@ export const createIngreso = async (req, res) => {
   }
 };
 
+
+// ... (Tus importaciones y código existente arriba) ...
+
+// NUEVA FUNCIÓN PARA LA LANDING PAGE (SIN TOKEN)
+export const createIngresoPublico = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const {
+      nombre,
+      apellido,
+      numeroDeDocumento,
+      valor,
+      cuenta,
+      tipo, 
+      customer_email,
+      usuarioId // <--- AHORA LO RECIBIMOS OBLIGATORIAMENTE DEL BODY
+    } = req.body;
+
+    // 1. Validación específica para este endpoint público
+    if (!usuarioId) {
+        return res.status(400).json({ message: "Error: Se requiere el ID del beneficiario (usuarioId) para registrar la venta pública." });
+    }
+    
+    if (!valor || !cuenta) {
+        return res.status(400).json({ message: "Valor y cuenta son obligatorios" });
+    }
+
+    // 2. Preparar datos (Misma lógica que el original para mantener consistencia)
+    const _id = uuidv4();
+    const createdAt = new Date();
+    
+    // Fecha de vencimiento: 1 año después
+    const fechaVencimiento = new Date(createdAt);
+    fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+
+    const payment_reference = `WEB-${Date.now()}`; // Cambié 'POS' por 'WEB' para que sepas que vino de la página
+    const payment_status = 'APPROVED'; // O 'PENDING' si prefieres validar manual
+
+    // Convertir array de productos a string
+    let productoStr = '';
+    if (Array.isArray(tipo)) {
+      productoStr = tipo.join(', ');
+    } else {
+      productoStr = tipo || 'General';
+    }
+
+    // 3. Query SQL (Exactamente igual a tu tabla actual)
+    const query = `
+      INSERT INTO "public"."ingresos" (
+        "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+        "producto", "valor", "cuenta", "customer_email", "payment_status",
+        "payment_reference", "usuario", "createdAt", "updatedAt", "__v"
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING *;
+    `;
+
+    const values = [
+      _id,
+      nombre || 'Cliente Web',
+      apellido || '',
+      numeroDeDocumento || '0',
+      fechaVencimiento.toISOString(),
+      productoStr,
+      String(valor),
+      cuenta,
+      customer_email || '',
+      payment_status,
+      payment_reference,
+      usuarioId, // Usamos el ID que llegó del body
+      createdAt.toISOString(),
+      createdAt.toISOString(),
+      '0'
+    ];
+
+    await client.query('BEGIN');
+    const result = await client.query(query, values);
+    await client.query('COMMIT');
+
+    // Respondemos éxito
+    return res.status(201).json({ 
+        success: true, 
+        message: "Venta pública registrada", 
+        data: result.rows[0] 
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error en createIngresoPublico:", error);
+    return res.status(500).json({ message: "Error interno", error: error.message });
+  } finally {
+    client.release();
+  }
+};
+
 // ✅ Obtener ingresos del usuario logueado
 export const getIngresosByUsuario = async (req, res) => {
   try {
