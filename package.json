@@ -13,9 +13,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google-cloud/storage": "^7.18.0",
     "compression": "^1.7.5",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
+    "dotenv": "^16.6.1",
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
@@ -23,6 +24,7 @@
     "mongodb": "^6.10.0",
     "mongoose": "^8.8.1",
     "morgan": "^1.10.0",
+    "multer": "^2.0.2",
     "pg": "^8.16.3",
     "uuid": "^13.0.0"
   },

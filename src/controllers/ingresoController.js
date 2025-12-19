@@ -3,6 +3,7 @@ import pool from "../database.js";
 
 // Crear un nuevo ingreso
 import { v4 as uuidv4 } from 'uuid'; // Importamos la librería UUID
+import { uploadReceiptToGCS } from "../services/gcsPaymentReceipts.js";
 
 export const createIngreso = async (req, res) => {
   const client = await pool.connect();
@@ -92,95 +93,87 @@ export const createIngreso = async (req, res) => {
 
 // NUEVA FUNCIÓN PARA LA LANDING PAGE (SIN TOKEN)
 export const createIngresoPublico = async (req, res) => {
-  const client = await pool.connect();
+    const client = await pool.connect();
 
-  try {
-    const {
-      nombre,
-      apellido,
-      numeroDeDocumento,
-      valor,
-      cuenta,
-      tipo, 
-      customer_email,
-      usuarioId // <--- AHORA LO RECIBIMOS OBLIGATORIAMENTE DEL BODY
-    } = req.body;
+    try {
+        const {
+            nombre,
+            apellido,
+            numeroDeDocumento,
+            valor,
+            cuenta,
+            tipo, 
+            customer_email,
+            usuarioId 
+        } = req.body;
 
-    // 1. Validación específica para este endpoint público
-    if (!usuarioId) {
-        return res.status(400).json({ message: "Error: Se requiere el ID del beneficiario (usuarioId) para registrar la venta pública." });
+        // 1. VALIDAR ARCHIVO
+        if (!req.file) {
+            return res.status(400).json({ message: "⚠️ Debes subir la foto del comprobante." });
+        }
+
+        // 2. SUBIR A GOOGLE CLOUD USANDO TU SERVICIO ADAPTADO ☁️
+        let comprobanteUrl = '';
+        try {
+             // Llamamos a tu función pasando el Buffer y los metadatos
+             comprobanteUrl = await uploadReceiptToGCS(
+                req.file.buffer, 
+                {
+                    filename: req.file.originalname,
+                    mimetype: req.file.mimetype,
+                    numeroDocumento: numeroDeDocumento || 'sin_cedula'
+                }
+             );
+        } catch (uploadError) {
+            console.error("Error subiendo a GCS:", uploadError);
+            return res.status(500).json({ message: "Error al guardar la imagen en la nube." });
+        }
+
+        // 3. LÓGICA SQL (IGUAL QUE ANTES)
+        if (!usuarioId) return res.status(400).json({ message: "Falta usuarioId" });
+
+        const _id = uuidv4();
+        const createdAt = new Date();
+        const fechaVencimiento = new Date(createdAt);
+        fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+        const payment_reference = `WEB-${Date.now()}`;
+        const productoStr = Array.isArray(tipo) ? tipo.join(', ') : (tipo || 'Certificado Express');
+
+        const query = `
+            INSERT INTO "public"."ingresos" (
+                "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+                "producto", "valor", "cuenta", "customer_email", "payment_status",
+                "payment_reference", "usuario", "comprobante_url", "createdAt", "updatedAt", "__v"
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            RETURNING *;
+        `;
+
+        const values = [
+            _id, nombre, apellido, numeroDeDocumento, fechaVencimiento.toISOString(),
+            productoStr, String(valor), cuenta, customer_email, 
+            'VERIFICACION_PENDIENTE', payment_reference, usuarioId, 
+            comprobanteUrl, // <--- AQUÍ GUARDAMOS LA URL QUE NOS DIO GCS
+            createdAt.toISOString(), createdAt.toISOString(), '0'
+        ];
+
+        await client.query('BEGIN');
+        const result = await client.query(query, values);
+        await client.query('COMMIT');
+
+        return res.status(201).json({ 
+            success: true, 
+            message: "Recibido. Procesando...", 
+            data: result.rows[0] 
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Error:", error);
+        return res.status(500).json({ message: "Error interno", error: error.message });
+    } finally {
+        client.release();
     }
-    
-    if (!valor || !cuenta) {
-        return res.status(400).json({ message: "Valor y cuenta son obligatorios" });
-    }
-
-    // 2. Preparar datos (Misma lógica que el original para mantener consistencia)
-    const _id = uuidv4();
-    const createdAt = new Date();
-    
-    // Fecha de vencimiento: 1 año después
-    const fechaVencimiento = new Date(createdAt);
-    fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
-
-    const payment_reference = `WEB-${Date.now()}`; // Cambié 'POS' por 'WEB' para que sepas que vino de la página
-    const payment_status = 'APPROVED'; // O 'PENDING' si prefieres validar manual
-
-    // Convertir array de productos a string
-    let productoStr = '';
-    if (Array.isArray(tipo)) {
-      productoStr = tipo.join(', ');
-    } else {
-      productoStr = tipo || 'General';
-    }
-
-    // 3. Query SQL (Exactamente igual a tu tabla actual)
-    const query = `
-      INSERT INTO "public"."ingresos" (
-        "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
-        "producto", "valor", "cuenta", "customer_email", "payment_status",
-        "payment_reference", "usuario", "createdAt", "updatedAt", "__v"
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      RETURNING *;
-    `;
-
-    const values = [
-      _id,
-      nombre || 'Cliente Web',
-      apellido || '',
-      numeroDeDocumento || '0',
-      fechaVencimiento.toISOString(),
-      productoStr,
-      String(valor),
-      cuenta,
-      customer_email || '',
-      payment_status,
-      payment_reference,
-      usuarioId, // Usamos el ID que llegó del body
-      createdAt.toISOString(),
-      createdAt.toISOString(),
-      '0'
-    ];
-
-    await client.query('BEGIN');
-    const result = await client.query(query, values);
-    await client.query('COMMIT');
-
-    // Respondemos éxito
-    return res.status(201).json({ 
-        success: true, 
-        message: "Venta pública registrada", 
-        data: result.rows[0] 
-    });
-
-  } catch (error) {
-    await client.query('ROLLBACK');
-    console.error("Error en createIngresoPublico:", error);
-    return res.status(500).json({ message: "Error interno", error: error.message });
-  } finally {
-    client.release();
-  }
 };
 
 // ✅ Obtener ingresos del usuario logueado
