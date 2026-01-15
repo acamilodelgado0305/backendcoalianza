@@ -11,6 +11,8 @@ import ingresoRoutes from './routes/ingresoRoutes.js';
 import egresoRoutes from './routes/egresoRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';
 import personRoutes from './routes/personRoutes.js';
+import inventarioRoutes from './routes/inventarioRouter.js';
+import pedidoRoutes from './routes/pedidoRoutes.js';
 
 dotenv.config();
 
@@ -37,6 +39,8 @@ app.get('/health', (req, res) => {
 app.use('/api/ingresos', ingresoRoutes);
 app.use('/api/egresos', egresoRoutes);
 app.use('/api/personas', personRoutes);
+app.use('/api/inventario', inventarioRoutes);
+app.use('/api/pedidos', pedidoRoutes);
 app.use('/api', clientRoutes);
 
 // Conectar a la base de datos

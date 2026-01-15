@@ -87,30 +87,56 @@ export const createPersona = async (req, res) => {
 // Ideal para el autocompletado del POS
 export const searchPersonas = async (req, res) => {
     try {
-        const { q } = req.query; // ?q=juan o ?q=1098...
+        const { q } = req.query;
 
-        let query = `SELECT * FROM "public"."personas" ORDER BY "created_at" DESC LIMIT 20`;
+        // 1. OBTENER EL ID DESDE EL TOKEN
+        // Según tu JSON del token: "id": 8. 
+        // Asumimos que tu middleware de auth coloca el payload decodificado en req.user
+        const usuarioId = req.user.id;
+
+        if (!usuarioId) {
+            return res.status(401).json({ message: "Token inválido o sin ID de usuario." });
+        }
+
+        let query = '';
         let values = [];
 
+        // 2. CONSTRUCCIÓN DE LA CONSULTA
+        // CAMBIO CLAVE: Usamos la columna "usuario" en lugar de "user_id"
+
         if (q) {
-            // Busca por nombre, apellido O número de documento
+            // Lógica: Filtra por la columna "usuario" Y (coincidencias de búsqueda)
             query = `
                 SELECT * FROM "public"."personas" 
                 WHERE 
-                    "numero_documento" ILIKE $1 OR
-                    "nombre" ILIKE $1 OR 
-                    "apellido" ILIKE $1
-                ORDER BY "nombre" ASC LIMIT 20
+                    "usuario" = $1 
+                    AND (
+                        "numero_documento" ILIKE $2 OR
+                        "nombre" ILIKE $2 OR 
+                        "apellido" ILIKE $2
+                    )
+                ORDER BY "nombre" ASC 
+                LIMIT 20
             `;
-            values = [`%${q}%`];
+            values = [usuarioId, `%${q}%`];
+        } else {
+            // Lógica: Trae solo los registros donde la columna "usuario" coincida con el token
+            query = `
+                SELECT * FROM "public"."personas" 
+                WHERE "usuario" = $1
+                ORDER BY "created_at" DESC 
+                LIMIT 20
+            `;
+            values = [usuarioId];
         }
 
         const result = await pool.query(query, values);
         return res.status(200).json(result.rows);
 
     } catch (error) {
-        console.error("Error buscando personas:", error);
-        return res.status(500).json({ message: "Error en la búsqueda" });
+        // Mejoramos el log para ver el error exacto si vuelve a pasar
+        console.error("Error en searchPersonas:", error.message);
+        return res.status(500).json({ message: "Error interno al buscar personas" });
     }
 };
 
