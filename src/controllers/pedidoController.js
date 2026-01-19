@@ -1,4 +1,6 @@
 import pool from "../database.js";
+import { v4 as uuidv4 } from 'uuid'; // Importamos la librería UUID
+
 
 // ==========================================
 // 1. CREAR PEDIDO (CREATE)
@@ -215,11 +217,15 @@ export const getPedidoById = async (req, res) => {
 // ==========================================
 // 4. CAMBIAR ESTADO DE PEDIDO (UPDATE STATUS)
 // ==========================================
+
 export const updateEstadoPedido = async (req, res) => {
     const client = await pool.connect();
     try {
         const { id } = req.params;
-        const { nuevo_estado } = req.body; // 'PENDIENTE', 'ENTREGADO', 'ANULADO'
+        // Ahora recibimos el objeto o el string, desestructuramos con seguridad
+        const nuevo_estado = req.body.nuevo_estado || req.body.estado;
+        const cuenta_destino = req.body.cuenta_destino;
+
         const usuarioId = req.user?.id;
 
         if (!['PENDIENTE', 'ENTREGADO', 'ANULADO'].includes(nuevo_estado)) {
@@ -228,8 +234,16 @@ export const updateEstadoPedido = async (req, res) => {
 
         await client.query('BEGIN');
 
-        // 1. Obtener estado actual
-        const checkQuery = `SELECT estado FROM "public"."pedidos" WHERE id = $1 AND user_id = $2 FOR UPDATE`;
+        // 1. CORRECCIÓN AQUÍ: Usamos "FOR UPDATE OF p"
+        // Esto le dice a la DB: "Bloquea la fila del pedido, pero solo lee la persona sin bloquearla"
+        const checkQuery = `
+            SELECT p.estado, p.total, p.persona_id, per.nombre, per.apellido, per.numero_documento, per.email
+            FROM "public"."pedidos" p
+            LEFT JOIN "public"."personas" per ON p.persona_id = per.id
+            WHERE p.id = $1 AND p.user_id = $2 
+            FOR UPDATE OF p
+        `;
+
         const checkRes = await client.query(checkQuery, [id, usuarioId]);
 
         if (checkRes.rows.length === 0) {
@@ -237,11 +251,13 @@ export const updateEstadoPedido = async (req, res) => {
             return res.status(404).json({ message: "Pedido no encontrado" });
         }
 
-        const estadoActual = checkRes.rows[0].estado;
+        const pedido = checkRes.rows[0];
+        const estadoActual = pedido.estado;
 
-        // LÓGICA DE INVENTARIO AL CAMBIAR ESTADO
+        // ... EL RESTO DE TU LÓGICA DE INVENTARIO SIGUE IGUAL ...
+        // (Copiar y pegar la lógica de stock CASO A y CASO B que ya tenías)
 
-        // CASO A: Se ANULA el pedido -> Devolver Stock
+        // --- CASO A: ANULADO ---
         if (nuevo_estado === 'ANULADO' && estadoActual !== 'ANULADO') {
             const itemsQuery = `
                 SELECT dp.inventario_id, dp.cantidad, i.tipo_programa 
@@ -252,7 +268,6 @@ export const updateEstadoPedido = async (req, res) => {
             const itemsRes = await client.query(itemsQuery, [id]);
 
             for (const item of itemsRes.rows) {
-                // Solo devolvemos stock si no es un servicio
                 const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa);
                 if (!esServicio) {
                     await client.query(`
@@ -263,9 +278,7 @@ export const updateEstadoPedido = async (req, res) => {
                 }
             }
         }
-
-        // CASO B: Estaba ANULADO y se REACTIVA (PENDIENTE/ENTREGADO) -> Descontar Stock nuevamente
-        // Nota: Esto es peligroso si ya no hay stock. Validémoslo.
+        // --- CASO B: REACTIVADO ---
         else if (estadoActual === 'ANULADO' && nuevo_estado !== 'ANULADO') {
             const itemsQuery = `
                 SELECT dp.inventario_id, dp.cantidad, i.cantidad as stock_actual, i.tipo_programa 
@@ -279,7 +292,7 @@ export const updateEstadoPedido = async (req, res) => {
                 const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa);
                 if (!esServicio) {
                     if (item.stock_actual < item.cantidad) {
-                        throw new Error(`No se puede reactivar el pedido. Stock insuficiente para producto ID ${item.inventario_id}`);
+                        throw new Error(`No se puede reactivar: Stock insuficiente para producto ID ${item.inventario_id}`);
                     }
                     await client.query(`
                         UPDATE "public"."inventario" 
@@ -288,6 +301,50 @@ export const updateEstadoPedido = async (req, res) => {
                     `, [item.cantidad, item.inventario_id]);
                 }
             }
+        }
+
+        // ---------------------------------------------------------
+        // CREACIÓN DE INGRESO (Cuando pasa a ENTREGADO)
+        // ---------------------------------------------------------
+        if (nuevo_estado === 'ENTREGADO' && estadoActual !== 'ENTREGADO') {
+
+            const cuentaFinal = cuenta_destino || 'Caja General';
+            const _idIngreso = uuidv4(); // Asegúrate de tener importado uuidv4
+            const createdAt = new Date();
+            const fechaVencimiento = new Date(createdAt);
+            fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+
+            const payment_reference = `PEDIDO-${id}-${Date.now()}`;
+
+            const insertIngresoQuery = `
+                INSERT INTO "public"."ingresos" (
+                    "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+                    "producto", "valor", "cuenta", "customer_email", "payment_status",
+                    "payment_reference", "usuario", "createdAt", "updatedAt", "__v", "comprobante_url"
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            `;
+
+            const valoresIngreso = [
+                _idIngreso,
+                pedido.nombre || 'Cliente Ocasional',
+                pedido.apellido || '',
+                pedido.numero_documento || '0',
+                fechaVencimiento.toISOString(),
+                `Venta POS - Pedido #${id}`,
+                String(pedido.total),
+                cuentaFinal,
+                pedido.email || '',
+                'APPROVED',
+                payment_reference,
+                usuarioId,
+                createdAt.toISOString(),
+                createdAt.toISOString(),
+                '0',
+                ''
+            ];
+
+            await client.query(insertIngresoQuery, valoresIngreso);
         }
 
         // 2. Actualizar estado
