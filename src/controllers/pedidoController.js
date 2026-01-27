@@ -567,7 +567,6 @@ export const getOrderStats = async (req, res) => {
                 WHERE p.user_id = $1 AND p.estado != 'ANULADO'
                 GROUP BY i.nombre
                 ORDER BY total_vendido DESC
-                LIMIT 5
             `, [usuarioId]),
 
             // 4. Total Unidades (Suma de todos los items de pedidos no anulados)
