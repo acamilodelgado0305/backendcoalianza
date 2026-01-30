@@ -119,28 +119,35 @@ export const createPedido = async (req, res) => {
 export const getPedidos = async (req, res) => {
     try {
         const usuarioId = req.user?.id;
-        const { estado } = req.query;
+        const { estado, cierre_id } = req.query; // Recibimos cierre_id opcional
 
-        // Construcción de filtros dinámicos
+        // FILTRO BASE: Usuario actual
         let whereClause = `WHERE p.user_id = $1`;
         const values = [usuarioId];
+        let counter = 2; // Contador para params ($2, $3...)
 
-        if (estado) {
-            whereClause += ` AND p.estado = $2`;
-            values.push(estado);
+        // --- LÓGICA DE VISIBILIDAD ---
+        if (cierre_id) {
+            // CASO A: Queremos ver el historial de un cierre específico
+            whereClause += ` AND p.cierre_id = $${counter}`;
+            values.push(cierre_id);
+            counter++;
+        } else {
+            // CASO B: (Por defecto) Solo mostramos los pedidos ACTUALES (sin cerrar)
+            whereClause += ` AND p.cierre_id IS NULL`;
         }
 
-        // QUERY OPTIMIZADA: Trae la cabecera Y los ítems en un array JSON
+        // Filtro adicional por estado (si se envía)
+        if (estado) {
+            whereClause += ` AND p.estado = $${counter}`;
+            values.push(estado);
+            counter++;
+        }
+
         const query = `
             SELECT 
-                p.id, 
-                p.total, 
-                p.estado, 
-                p.created_at, 
-                p.observaciones,
-                pe.nombre as cliente_nombre, 
-                pe.apellido as cliente_apellido,
-                pe.direccion as cliente_direccion,
+                p.id, p.total, p.estado, p.created_at, p.observaciones, p.cierre_id,
+                pe.nombre as cliente_nombre, pe.apellido as cliente_apellido,
                 COALESCE(
                     json_agg(
                         json_build_object(
@@ -148,8 +155,7 @@ export const getPedidos = async (req, res) => {
                             'cantidad', dp.cantidad,
                             'precio', dp.precio_unitario
                         ) 
-                    ) FILTER (WHERE i.id IS NOT NULL), 
-                    '[]'
+                    ) FILTER (WHERE i.id IS NOT NULL), '[]'
                 ) as items_detalle
             FROM "public"."pedidos" p
             JOIN "public"."personas" pe ON p.persona_id = pe.id
@@ -158,14 +164,11 @@ export const getPedidos = async (req, res) => {
             ${whereClause}
             GROUP BY p.id, pe.id
             ORDER BY p.created_at DESC
-            LIMIT 50
         `;
 
         const result = await pool.query(query, values);
 
-        return res.status(200).json({
-            data: result.rows
-        });
+        return res.status(200).json({ data: result.rows });
 
     } catch (error) {
         console.error("Error obteniendo pedidos:", error);
@@ -532,31 +535,36 @@ export const updatePedido = async (req, res) => {
 };
 
 
+// ==========================================
+// MODIFICACIÓN: getOrderStats (Filtrar por sesión actual)
+// ==========================================
 export const getOrderStats = async (req, res) => {
     try {
         const usuarioId = req.user.id;
 
-        // Ejecutamos 4 consultas en PARALELO para máxima velocidad
+        // AGREGAMOS: "AND cierre_id IS NULL" a todas las consultas 
+        // para que solo traiga lo de la sesión actual (post-cierre).
+
         const [kpiRes, estadoRes, productosRes, unidadesRes] = await Promise.all([
 
-            // 1. KPIs Generales (Total Pedidos y Dinero)
+            // 1. KPIs Generales (Sesión Actual)
             pool.query(`
                 SELECT 
                     COUNT(*) as total_pedidos,
                     COALESCE(SUM(total), 0) as total_ingresos
                 FROM pedidos 
-                WHERE user_id = $1
+                WHERE user_id = $1 AND cierre_id IS NULL
             `, [usuarioId]),
 
-            // 2. Desglose por Estado
+            // 2. Desglose por Estado (Sesión Actual)
             pool.query(`
                 SELECT estado, COUNT(*) as cantidad 
                 FROM pedidos 
-                WHERE user_id = $1 
+                WHERE user_id = $1 AND cierre_id IS NULL
                 GROUP BY estado
             `, [usuarioId]),
 
-            // 3. Top 5 Productos más vendidos
+            // 3. Top Productos (Sesión Actual)
             pool.query(`
                 SELECT 
                     i.nombre, 
@@ -564,26 +572,26 @@ export const getOrderStats = async (req, res) => {
                 FROM detalle_pedidos dp
                 JOIN pedidos p ON dp.pedido_id = p.id
                 JOIN inventario i ON dp.inventario_id = i.id
-                WHERE p.user_id = $1 AND p.estado != 'ANULADO'
+                WHERE p.user_id = $1 AND p.estado != 'ANULADO' AND p.cierre_id IS NULL
                 GROUP BY i.nombre
                 ORDER BY total_vendido DESC
+                LIMIT 5
             `, [usuarioId]),
 
-            // 4. Total Unidades (Suma de todos los items de pedidos no anulados)
+            // 4. Unidades (Sesión Actual)
             pool.query(`
                 SELECT COALESCE(SUM(dp.cantidad), 0) as total_unidades
                 FROM detalle_pedidos dp
                 JOIN pedidos p ON dp.pedido_id = p.id
-                WHERE p.user_id = $1 AND p.estado != 'ANULADO'
+                WHERE p.user_id = $1 AND p.estado != 'ANULADO' AND p.cierre_id IS NULL
             `, [usuarioId])
         ]);
 
-        // Formatear respuesta
         const stats = {
             general: {
-                total_pedidos: parseInt(kpiRes.rows[0].total_pedidos),
-                total_ingresos: Number(kpiRes.rows[0].total_ingresos),
-                total_unidades: parseInt(unidadesRes.rows[0].total_unidades)
+                total_pedidos: parseInt(kpiRes.rows[0]?.total_pedidos || 0),
+                total_ingresos: Number(kpiRes.rows[0]?.total_ingresos || 0),
+                total_unidades: parseInt(unidadesRes.rows[0]?.total_unidades || 0)
             },
             por_estado: estadoRes.rows.map(row => ({
                 name: row.estado,
@@ -600,5 +608,100 @@ export const getOrderStats = async (req, res) => {
     } catch (error) {
         console.error("Error en estadísticas:", error);
         res.status(500).json({ message: "Error calculando estadísticas" });
+    }
+};
+
+
+
+// ==========================================
+// 6. REALIZAR CIERRE DE CAJA (NUEVO)
+// ==========================================
+export const realizarCierre = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const usuarioId = req.user?.id;
+        const { observaciones } = req.body;
+
+        await client.query('BEGIN');
+
+        // 1. Calcular totales de lo que está "abierto" (sin cierre_id)
+        // Solo sumamos lo que cuenta como dinero real (ej: ENTREGADO) o todo segun tu logica.
+        // Aquí sumamos todo lo generado en el periodo.
+        const statsQuery = `
+            SELECT 
+                COUNT(*) as total_pedidos,
+                COALESCE(SUM(total), 0) as total_ingresos
+            FROM "public"."pedidos"
+            WHERE user_id = $1 AND cierre_id IS NULL
+        `;
+        const statsRes = await client.query(statsQuery, [usuarioId]);
+        const { total_pedidos, total_ingresos } = statsRes.rows[0];
+
+        if (parseInt(total_pedidos) === 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ message: "No hay pedidos pendientes por cerrar." });
+        }
+
+        // 2. Crear el registro en la tabla 'cierres'
+        const insertCierreQuery = `
+            INSERT INTO "public"."cierres" ("user_id", "total_ingresos", "total_pedidos", "observaciones", "fecha_cierre")
+            VALUES ($1, $2, $3, $4, NOW())
+            RETURNING id
+        `;
+        const cierreRes = await client.query(insertCierreQuery, [
+            usuarioId,
+            total_ingresos,
+            total_pedidos,
+            observaciones || 'Cierre manual de ventas'
+        ]);
+        const nuevoCierreId = cierreRes.rows[0].id;
+
+        // 3. Actualizar los pedidos para vincularlos a este cierre (Esto es lo que "limpia" la vista actual)
+        const updatePedidosQuery = `
+            UPDATE "public"."pedidos"
+            SET cierre_id = $1
+            WHERE user_id = $2 AND cierre_id IS NULL
+        `;
+        await client.query(updatePedidosQuery, [nuevoCierreId, usuarioId]);
+
+        await client.query('COMMIT');
+
+        return res.status(200).json({
+            success: true,
+            message: "Cierre realizado con éxito. El dashboard se ha reiniciado.",
+            data: {
+                cierre_id: nuevoCierreId,
+                total_cerrado: total_ingresos,
+                pedidos_archivados: total_pedidos
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error("Error en cierre:", error);
+        return res.status(500).json({ message: "Error al realizar el cierre" });
+    } finally {
+        client.release();
+    }
+};
+
+
+
+export const getCierres = async (req, res) => {
+    try {
+        const usuarioId = req.user?.id;
+
+        const query = `
+            SELECT * FROM "public"."cierres"
+            WHERE user_id = $1
+            ORDER BY fecha_cierre DESC
+            LIMIT 20
+        `;
+        const result = await pool.query(query, [usuarioId]);
+
+        return res.status(200).json({ data: result.rows });
+    } catch (error) {
+        console.error("Error obteniendo cierres:", error);
+        return res.status(500).json({ message: "Error al obtener historial" });
     }
 };

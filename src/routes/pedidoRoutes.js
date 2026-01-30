@@ -7,7 +7,9 @@ import {
     updateEstadoPedido,
     deletePedido,
     updatePedido,
-    getOrderStats
+    getOrderStats,
+    realizarCierre,
+    getCierres
 } from '../controllers/pedidoController.js';
 
 const router = express.Router();
@@ -21,6 +23,11 @@ router.use(authMiddleware);
 // Filtros opcionales: ?estado=PENDIENTE&fecha_inicio=Y-M-D&page=1
 router.get('/', getPedidos);
 router.get('/stats', getOrderStats);
+
+
+router.post('/cierre', realizarCierre);
+
+router.get('/historial-cierres', getCierres);
 
 // GET /api/pedidos/:id
 // Obtener el pedido y sus items (detalle)
