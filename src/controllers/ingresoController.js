@@ -16,7 +16,10 @@ export const createIngreso = async (req, res) => {
       valor,
       cuenta,
       tipo, // En el front se llama 'tipo', en la DB 'producto'
-      customer_email
+      customer_email,
+      tipoDocumento,
+      tipo_documento,
+      tipoDeDocumento
     } = req.body;
 
     const usuarioId = req.user?.id; // Asumiendo que usas un middleware de auth
@@ -28,6 +31,7 @@ export const createIngreso = async (req, res) => {
     // 1. Preparar datos
     const _id = uuidv4();
     const createdAt = new Date();
+    const tipoDocumentoFinal = tipoDocumento || tipo_documento || tipoDeDocumento || 'CC';
 
     // Lógica: Fecha de vencimiento 1 año después (según patrones de tu SQL)
     const fechaVencimiento = new Date(createdAt);
@@ -47,11 +51,11 @@ export const createIngreso = async (req, res) => {
     // 3. Query SQL optimizada
     const query = `
       INSERT INTO "public"."ingresos" (
-        "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+        "_id", "nombre", "apellido", "numeroDeDocumento", "tipoDocumento", "fechaVencimiento",
         "producto", "valor", "cuenta", "customer_email", "payment_status",
         "payment_reference", "usuario", "createdAt", "updatedAt", "__v"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *;
     `;
 
@@ -60,6 +64,7 @@ export const createIngreso = async (req, res) => {
       nombre || 'Cliente',
       apellido || 'General',
       numeroDeDocumento || '0',
+      tipoDocumentoFinal,
       fechaVencimiento.toISOString(),
       productoStr,
       String(valor), // Tu DB espera 'text' para valor
@@ -104,7 +109,10 @@ export const createIngresoPublico = async (req, res) => {
             cuenta,
             tipo, 
             customer_email,
-            usuarioId 
+            usuarioId,
+            tipoDocumento,
+            tipo_documento,
+            tipoDeDocumento
         } = req.body;
 
         // 1. VALIDAR ARCHIVO
@@ -134,6 +142,7 @@ export const createIngresoPublico = async (req, res) => {
 
         const _id = uuidv4();
         const createdAt = new Date();
+        const tipoDocumentoFinal = tipoDocumento || tipo_documento || tipoDeDocumento || 'CC';
         const fechaVencimiento = new Date(createdAt);
         fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
         const payment_reference = `WEB-${Date.now()}`;
@@ -141,16 +150,16 @@ export const createIngresoPublico = async (req, res) => {
 
         const query = `
             INSERT INTO "public"."ingresos" (
-                "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
+                "_id", "nombre", "apellido", "numeroDeDocumento", "tipoDocumento", "fechaVencimiento",
                 "producto", "valor", "cuenta", "customer_email", "payment_status",
                 "payment_reference", "usuario", "comprobante_url", "createdAt", "updatedAt", "__v"
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING *;
         `;
 
         const values = [
-            _id, nombre, apellido, numeroDeDocumento, fechaVencimiento.toISOString(),
+            _id, nombre, apellido, numeroDeDocumento, tipoDocumentoFinal, fechaVencimiento.toISOString(),
             productoStr, String(valor), cuenta, customer_email, 
             'VERIFICACION_PENDIENTE', payment_reference, usuarioId, 
             comprobanteUrl, // <--- AQUÍ GUARDAMOS LA URL QUE NOS DIO GCS
@@ -217,7 +226,10 @@ export const updateIngreso = async (req, res) => {
             valor,
             cuenta,
             tipo, // Array desde el frontend
-            customer_email
+            customer_email,
+            tipoDocumento,
+            tipo_documento,
+            tipoDeDocumento
         } = req.body;
 
         // Validar existencia primero
@@ -236,6 +248,10 @@ export const updateIngreso = async (req, res) => {
             productoStr = tipo || checkResult.rows[0].producto; // Mantener anterior si no llega
         }
 
+        const tipoDocumentoBody = tipoDocumento || tipo_documento || tipoDeDocumento;
+        const tipoDocumentoActual = checkResult.rows[0].tipoDocumento || checkResult.rows[0].tipo_documento;
+        const tipoDocumentoFinal = tipoDocumentoBody || tipoDocumentoActual || 'CC';
+
         const updatedAt = new Date().toISOString();
 
         const updateQuery = `
@@ -244,12 +260,13 @@ export const updateIngreso = async (req, res) => {
                 "nombre" = $1,
                 "apellido" = $2,
                 "numeroDeDocumento" = $3,
-                "valor" = $4,
-                "cuenta" = $5,
-                "producto" = $6,
-                "customer_email" = $7,
-                "updatedAt" = $8
-            WHERE "_id" = $9
+                "tipoDocumento" = $4,
+                "valor" = $5,
+                "cuenta" = $6,
+                "producto" = $7,
+                "customer_email" = $8,
+                "updatedAt" = $9
+            WHERE "_id" = $10
             RETURNING *;
         `;
 
@@ -257,6 +274,7 @@ export const updateIngreso = async (req, res) => {
             nombre,
             apellido,
             numeroDeDocumento,
+            tipoDocumentoFinal,
             String(valor),
             cuenta,
             productoStr,

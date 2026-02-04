@@ -27,6 +27,7 @@ export const getClientByCedula = async (req, res) => {
                 "nombre", 
                 "apellido", 
                 "numeroDeDocumento", 
+                "tipoDocumento",
                 "producto", 
                 "fechaVencimiento", 
                 "createdAt", 
@@ -66,7 +67,7 @@ export const getClientByCedula = async (req, res) => {
             createdAt: data.createdAt, 
             fechaVencimiento: data.fechaVencimiento, 
             email: data.customer_email || null,
-            tipoDeDocumento: 'C.C' 
+            tipoDeDocumento: data.tipoDocumento || 'C.C' 
         };
 
         return res.status(200).json(responseData);
