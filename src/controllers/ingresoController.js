@@ -98,57 +98,40 @@ export const createIngreso = async (req, res) => {
 
 // NUEVA FUNCIÓN PARA LA LANDING PAGE (SIN TOKEN)
 export const createIngresoPublico = async (req, res) => {
-    const client = await pool.connect();
+  const client = await pool.connect();
 
-    try {
-        const {
-            nombre,
-            apellido,
-            numeroDeDocumento,
-            valor,
-            cuenta,
-            tipo, 
-            customer_email,
-            usuarioId,
-            tipoDocumento,
-            tipo_documento,
-            tipoDeDocumento
-        } = req.body;
+  try {
+    const {
+      nombre,
+      apellido,
+      numeroDeDocumento,
+      valor,
+      cuenta,
+      tipo,
+      customer_email,
+      usuarioId,
+      tipoDocumento,
+      tipo_documento,
+      tipoDeDocumento
+    } = req.body;
 
-        // 1. VALIDAR ARCHIVO
-        if (!req.file) {
-            return res.status(400).json({ message: "⚠️ Debes subir la foto del comprobante." });
-        }
+    // 1. VALIDAR ARCHIVO
 
-        // 2. SUBIR A GOOGLE CLOUD USANDO TU SERVICIO ADAPTADO ☁️
-        let comprobanteUrl = '';
-        try {
-             // Llamamos a tu función pasando el Buffer y los metadatos
-             comprobanteUrl = await uploadReceiptToGCS(
-                req.file.buffer, 
-                {
-                    filename: req.file.originalname,
-                    mimetype: req.file.mimetype,
-                    numeroDocumento: numeroDeDocumento || 'sin_cedula'
-                }
-             );
-        } catch (uploadError) {
-            console.error("Error subiendo a GCS:", uploadError);
-            return res.status(500).json({ message: "Error al guardar la imagen en la nube." });
-        }
 
-        // 3. LÓGICA SQL (IGUAL QUE ANTES)
-        if (!usuarioId) return res.status(400).json({ message: "Falta usuarioId" });
+    // 2. SUBIR A GOOGLE CLOUD USANDO TU SERVICIO ADAPTADO ☁️
 
-        const _id = uuidv4();
-        const createdAt = new Date();
-        const tipoDocumentoFinal = tipoDocumento || tipo_documento || tipoDeDocumento || 'CC';
-        const fechaVencimiento = new Date(createdAt);
-        fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
-        const payment_reference = `WEB-${Date.now()}`;
-        const productoStr = Array.isArray(tipo) ? tipo.join(', ') : (tipo || 'Certificado Express');
+    // 3. LÓGICA SQL (IGUAL QUE ANTES)
+    if (!usuarioId) return res.status(400).json({ message: "Falta usuarioId" });
 
-        const query = `
+    const _id = uuidv4();
+    const createdAt = new Date();
+    const tipoDocumentoFinal = tipoDocumento || tipo_documento || tipoDeDocumento || 'CC';
+    const fechaVencimiento = new Date(createdAt);
+    fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+    const payment_reference = `WEB-${Date.now()}`;
+    const productoStr = Array.isArray(tipo) ? tipo.join(', ') : (tipo || 'Certificado Express');
+
+    const query = `
             INSERT INTO "public"."ingresos" (
                 "_id", "nombre", "apellido", "numeroDeDocumento", "tipoDocumento", "fechaVencimiento",
                 "producto", "valor", "cuenta", "customer_email", "payment_status",
@@ -158,31 +141,31 @@ export const createIngresoPublico = async (req, res) => {
             RETURNING *;
         `;
 
-        const values = [
-            _id, nombre, apellido, numeroDeDocumento, tipoDocumentoFinal, fechaVencimiento.toISOString(),
-            productoStr, String(valor), cuenta, customer_email, 
-            'VERIFICACION_PENDIENTE', payment_reference, usuarioId, 
-            comprobanteUrl, // <--- AQUÍ GUARDAMOS LA URL QUE NOS DIO GCS
-            createdAt.toISOString(), createdAt.toISOString(), '0'
-        ];
+    const values = [
+      _id, nombre, apellido, numeroDeDocumento, tipoDocumentoFinal, fechaVencimiento.toISOString(),
+      productoStr, String(valor), cuenta, customer_email,
+      'VERIFICACION_PENDIENTE', payment_reference, usuarioId,
+      '', // comprobante_url vacío
+      createdAt.toISOString(), createdAt.toISOString(), '0'
+    ];
 
-        await client.query('BEGIN');
-        const result = await client.query(query, values);
-        await client.query('COMMIT');
+    await client.query('BEGIN');
+    const result = await client.query(query, values);
+    await client.query('COMMIT');
 
-        return res.status(201).json({ 
-            success: true, 
-            message: "Recibido. Procesando...", 
-            data: result.rows[0] 
-        });
+    return res.status(201).json({
+      success: true,
+      message: "Recibido. Procesando...",
+      data: result.rows[0]
+    });
 
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error("Error:", error);
-        return res.status(500).json({ message: "Error interno", error: error.message });
-    } finally {
-        client.release();
-    }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error:", error);
+    return res.status(500).json({ message: "Error interno", error: error.message });
+  } finally {
+    client.release();
+  }
 };
 
 // ✅ Obtener ingresos del usuario logueado
@@ -216,45 +199,45 @@ export const getIngresosByUsuario = async (req, res) => {
 
 
 export const updateIngreso = async (req, res) => {
-    const client = await pool.connect();
-    try {
-        const { id } = req.params;
-        const {
-            nombre,
-            apellido,
-            numeroDeDocumento,
-            valor,
-            cuenta,
-            tipo, // Array desde el frontend
-            customer_email,
-            tipoDocumento,
-            tipo_documento,
-            tipoDeDocumento
-        } = req.body;
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    const {
+      nombre,
+      apellido,
+      numeroDeDocumento,
+      valor,
+      cuenta,
+      tipo, // Array desde el frontend
+      customer_email,
+      tipoDocumento,
+      tipo_documento,
+      tipoDeDocumento
+    } = req.body;
 
-        // Validar existencia primero
-        const checkQuery = `SELECT * FROM "public"."ingresos" WHERE "_id" = $1`;
-        const checkResult = await client.query(checkQuery, [id]);
+    // Validar existencia primero
+    const checkQuery = `SELECT * FROM "public"."ingresos" WHERE "_id" = $1`;
+    const checkResult = await client.query(checkQuery, [id]);
 
-        if (checkResult.rows.length === 0) {
-            return res.status(404).json({ message: "Ingreso no encontrado para actualizar" });
-        }
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ message: "Ingreso no encontrado para actualizar" });
+    }
 
-        // Procesar array a string
-        let productoStr = '';
-        if (Array.isArray(tipo)) {
-            productoStr = tipo.join(', ');
-        } else {
-            productoStr = tipo || checkResult.rows[0].producto; // Mantener anterior si no llega
-        }
+    // Procesar array a string
+    let productoStr = '';
+    if (Array.isArray(tipo)) {
+      productoStr = tipo.join(', ');
+    } else {
+      productoStr = tipo || checkResult.rows[0].producto; // Mantener anterior si no llega
+    }
 
-        const tipoDocumentoBody = tipoDocumento || tipo_documento || tipoDeDocumento;
-        const tipoDocumentoActual = checkResult.rows[0].tipoDocumento || checkResult.rows[0].tipo_documento;
-        const tipoDocumentoFinal = tipoDocumentoBody || tipoDocumentoActual || 'CC';
+    const tipoDocumentoBody = tipoDocumento || tipo_documento || tipoDeDocumento;
+    const tipoDocumentoActual = checkResult.rows[0].tipoDocumento || checkResult.rows[0].tipo_documento;
+    const tipoDocumentoFinal = tipoDocumentoBody || tipoDocumentoActual || 'CC';
 
-        const updatedAt = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
 
-        const updateQuery = `
+    const updateQuery = `
             UPDATE "public"."ingresos"
             SET 
                 "nombre" = $1,
@@ -270,52 +253,52 @@ export const updateIngreso = async (req, res) => {
             RETURNING *;
         `;
 
-        const values = [
-            nombre,
-            apellido,
-            numeroDeDocumento,
-            tipoDocumentoFinal,
-            String(valor),
-            cuenta,
-            productoStr,
-            customer_email,
-            updatedAt,
-            id
-        ];
+    const values = [
+      nombre,
+      apellido,
+      numeroDeDocumento,
+      tipoDocumentoFinal,
+      String(valor),
+      cuenta,
+      productoStr,
+      customer_email,
+      updatedAt,
+      id
+    ];
 
-        await client.query('BEGIN');
-        const result = await client.query(updateQuery, values);
-        await client.query('COMMIT');
+    await client.query('BEGIN');
+    const result = await client.query(updateQuery, values);
+    await client.query('COMMIT');
 
-        return res.status(200).json({ message: "Ingreso actualizado", data: result.rows[0] });
+    return res.status(200).json({ message: "Ingreso actualizado", data: result.rows[0] });
 
-    } catch (error) {
-        await client.query('ROLLBACK');
-        console.error("Error actualizando ingreso:", error);
-        return res.status(500).json({ message: "Error al actualizar", error: error.message });
-    } finally {
-        client.release();
-    }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("Error actualizando ingreso:", error);
+    return res.status(500).json({ message: "Error al actualizar", error: error.message });
+  } finally {
+    client.release();
+  }
 };
 
 // ==========================================
 // 5. ELIMINAR INGRESO (DELETE)
 // ==========================================
 export const deleteIngreso = async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const query = `DELETE FROM "public"."ingresos" WHERE "_id" = $1 RETURNING *`;
-        const result = await pool.query(query, [id]);
+  try {
+    const { id } = req.params;
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({ message: "Ingreso no encontrado para eliminar" });
-        }
+    const query = `DELETE FROM "public"."ingresos" WHERE "_id" = $1 RETURNING *`;
+    const result = await pool.query(query, [id]);
 
-        return res.status(200).json({ message: "Ingreso eliminado correctamente" });
-
-    } catch (error) {
-        console.error("Error eliminando ingreso:", error);
-        return res.status(500).json({ message: "Error al eliminar", error: error.message });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "Ingreso no encontrado para eliminar" });
     }
+
+    return res.status(200).json({ message: "Ingreso eliminado correctamente" });
+
+  } catch (error) {
+    console.error("Error eliminando ingreso:", error);
+    return res.status(500).json({ message: "Error al eliminar", error: error.message });
+  }
 };
