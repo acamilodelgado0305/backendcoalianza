@@ -7,29 +7,28 @@ import { v4 as uuidv4 } from 'uuid';
 // ==========================================
 export const createEgreso = async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     const { fecha, valor, cuenta, descripcion } = req.body;
-    const usuarioId = req.user?.id;
+    const usuarioId  = req.user?.id;
+    const businessId = req.user?.bid;
 
-    // Validaciones
-    if (!usuarioId) return res.status(401).json({ message: "Usuario no autenticado" });
+    if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
+    if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
     if (!fecha || !valor || !cuenta || !descripcion) {
       return res.status(400).json({ message: "Todos los campos son obligatorios" });
     }
 
-    // Preparar datos
     const _id = uuidv4();
     const now = new Date();
-    // Aseguramos que la fecha del gasto sea ISO String (para compatibilidad con tu columna text)
-    const fechaEgreso = new Date(fecha).toISOString(); 
+    const fechaEgreso = new Date(fecha).toISOString();
 
     const query = `
       INSERT INTO "public"."egresos" (
-        "_id", "fecha", "valor", "cuenta", "descripcion", 
-        "usuario", "createdAt", "updatedAt", "__v"
+        "_id", "fecha", "valor", "cuenta", "descripcion",
+        "usuario", "business_id", "createdAt", "updatedAt", "__v"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *;
     `;
 
@@ -40,9 +39,10 @@ export const createEgreso = async (req, res) => {
       cuenta,
       descripcion.trim(),
       usuarioId,
-      now.toISOString(), // createdAt como texto ISO
-      now.toISOString(), // updatedAt como texto ISO
-      0 // __v
+      businessId,
+      now.toISOString(),
+      now.toISOString(),
+      0
     ];
 
     await client.query('BEGIN');
@@ -65,21 +65,20 @@ export const createEgreso = async (req, res) => {
 // ==========================================
 export const getEgresosByUsuario = async (req, res) => {
   try {
-    const usuarioId = req.user?.id;
+    const businessId = req.user?.bid;
 
-    if (!usuarioId) {
-      return res.status(401).json({ message: "Usuario no autenticado" });
+    if (!businessId) {
+      return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
     }
 
-    // Ordenamos por fecha del gasto descendente, y luego por creación
     const query = `
       SELECT *
       FROM "public"."egresos"
-      WHERE usuario = $1
+      WHERE business_id = $1
       ORDER BY "fecha" DESC NULLS LAST, "createdAt" DESC NULLS LAST;
     `;
 
-    const result = await pool.query(query, [usuarioId]);
+    const result = await pool.query(query, [businessId]);
 
     return res.status(200).json(result.rows);
   } catch (error) {
@@ -170,9 +169,10 @@ export const updateEgreso = async (req, res) => {
 export const deleteEgreso = async (req, res) => {
     try {
         const { id } = req.params;
-        
-        const query = `DELETE FROM "public"."egresos" WHERE "_id" = $1 RETURNING *`;
-        const result = await pool.query(query, [id]);
+        const businessId = req.user?.bid;
+
+        const query = `DELETE FROM "public"."egresos" WHERE "_id" = $1 AND business_id = $2 RETURNING *`;
+        const result = await pool.query(query, [id, businessId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Egreso no encontrado para eliminar" });

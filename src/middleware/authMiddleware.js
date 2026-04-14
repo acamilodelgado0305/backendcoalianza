@@ -33,6 +33,7 @@ export const authMiddleware = (req, res, next) => {
         // Dejo info útil del usuario en la request
         req.user = {
             id: userId,
+            bid: decoded.bid,   // business_id del negocio activo
             name: decoded.name,
             role: decoded.role,
             scope: decoded.scope,
