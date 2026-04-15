@@ -417,8 +417,8 @@ export const updatePedido = async (req, res) => {
         let nuevoTotal = 0;
         for (const newItem of items) {
             const prodRes = await client.query(
-                `SELECT id, monto, cantidad, tipo_programa FROM inventario WHERE id = $1`,
-                [newItem.inventario_id]
+                `SELECT id, monto, cantidad, tipo_programa FROM inventario WHERE id = $1 AND business_id = $2`,
+                [newItem.inventario_id, businessId]
             );
             const producto = prodRes.rows[0];
             const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa);

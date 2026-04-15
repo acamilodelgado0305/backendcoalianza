@@ -66,20 +66,35 @@ export const createEgreso = async (req, res) => {
 export const getEgresosByUsuario = async (req, res) => {
   try {
     const businessId = req.user?.bid;
-
     if (!businessId) {
       return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
     }
 
+    const { fecha_inicio, fecha_fin } = req.query;
+
+    const params = [businessId];
+    const conditions = [`business_id = $1`];
+
+    if (fecha_inicio) {
+      params.push(new Date(fecha_inicio).toISOString());
+      conditions.push(`"fecha" >= $${params.length}`);
+    }
+    if (fecha_fin) {
+      const fin = new Date(fecha_fin);
+      fin.setHours(23, 59, 59, 999);
+      params.push(fin.toISOString());
+      conditions.push(`"fecha" <= $${params.length}`);
+    }
+
+    const where = conditions.join(' AND ');
     const query = `
       SELECT *
       FROM "public"."egresos"
-      WHERE business_id = $1
+      WHERE ${where}
       ORDER BY "fecha" DESC NULLS LAST, "createdAt" DESC NULLS LAST;
     `;
 
-    const result = await pool.query(query, [businessId]);
-
+    const result = await pool.query(query, params);
     return res.status(200).json(result.rows);
   } catch (error) {
     console.error("Error al obtener los egresos:", error);
@@ -93,8 +108,11 @@ export const getEgresosByUsuario = async (req, res) => {
 export const getEgresoById = async (req, res) => {
     try {
         const { id } = req.params;
-        const query = `SELECT * FROM "public"."egresos" WHERE "_id" = $1`;
-        const result = await pool.query(query, [id]);
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
+
+        const query = `SELECT * FROM "public"."egresos" WHERE "_id" = $1 AND business_id = $2`;
+        const result = await pool.query(query, [id, businessId]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ message: "Egreso no encontrado" });
@@ -115,10 +133,12 @@ export const updateEgreso = async (req, res) => {
     try {
         const { id } = req.params;
         const { fecha, valor, cuenta, descripcion } = req.body;
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        // Validar existencia
-        const checkQuery = `SELECT * FROM "public"."egresos" WHERE "_id" = $1`;
-        const checkResult = await client.query(checkQuery, [id]);
+        // Validar existencia y pertenencia al negocio
+        const checkQuery = `SELECT * FROM "public"."egresos" WHERE "_id" = $1 AND business_id = $2`;
+        const checkResult = await client.query(checkQuery, [id, businessId]);
 
         if (checkResult.rows.length === 0) {
             return res.status(404).json({ message: "Egreso no encontrado para actualizar" });
