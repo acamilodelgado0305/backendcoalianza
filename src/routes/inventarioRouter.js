@@ -1,47 +1,37 @@
 import express from 'express';
-import multer from 'multer'; // 1. Importamos Multer
+import multer from 'multer';
 import {
     createInventarioItem,
     getInventario,
     updateInventarioItem,
     deleteInventarioItem,
-    getInventarioByUserId
+    getInventarioByUserId,
+    getInventarioItemStats,
+    uploadInventarioPhoto,
 } from '../controllers/inventarioController.js';
 
 import { authMiddleware } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// --- CONFIGURACIÓN DE MULTER ---
-// Usamos memoryStorage para tener el Buffer disponible para Google Cloud
 const storage = multer.memoryStorage();
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 10 * 1024 * 1024 } // Opcional: Límite de 5MB por foto
-});
+const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-// --- MIDDLEWARE DE PROTECCIÓN GLOBAL ---
 router.use(authMiddleware);
 
-// --- RUTAS DE INVENTARIO ---
+router.get('/',           getInventario);
+router.post('/',          upload.single('imagen'), createInventarioItem);
+router.put('/:id',        upload.single('imagen'), updateInventarioItem);
+router.delete('/:id',     deleteInventarioItem);
+router.delete('/',        deleteInventarioItem);
 
-// Obtener todos los productos (Sin cambios)
-router.get('/', getInventario);
+// Stats e informe del producto
+router.get('/:id/stats',  getInventarioItemStats);
 
-// Crear nuevo producto (Agregamos upload.single('imagen'))
-// 'imagen' es el nombre del campo (key) que debes usar en Postman/React
-router.post('/', upload.single('imagen'), createInventarioItem);
+// Subir foto de manera independiente (desde el modal de informe)
+router.post('/:id/foto',  upload.single('imagen'), uploadInventarioPhoto);
 
-// Actualizar producto por ID (Agregamos upload.single('imagen'))
-router.put('/:id', upload.single('imagen'), updateInventarioItem);
-
-// Eliminar producto por ID (Sin cambios)
-router.delete('/:id', deleteInventarioItem);
-
-// Eliminar múltiples productos (Sin cambios)
-router.delete('/', deleteInventarioItem);
-
-// Ruta para admin (Sin cambios)
+// Admin
 router.get('/user/:userId', getInventarioByUserId);
 
 export default router;
