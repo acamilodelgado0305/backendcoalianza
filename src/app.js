@@ -21,7 +21,17 @@ const app = express();
 
 // Middlewares de seguridad y utilidades
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  credentials: true,
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:3002', // andesback puede llamar a auth-service
+    'https://andesfront.onrender.com',
+    'https://quickcontrola.com',
+    'https://santasofia.vercel.app',
+    'https://rapictrl.com'
+  ]
+}));
 app.use(compression());
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 app.use(express.json());
