@@ -5,7 +5,8 @@ import {
     searchPersonas,
     getPersonaById,
     updatePersona,
-    deletePersona
+    deletePersona,
+    getPersonaVentas,
 } from '../controllers/personController.js';
 
 const router = express.Router();
@@ -17,6 +18,9 @@ router.use(authMiddleware);
 
 // GET /api/personas?q=juan  -> Buscar (Autocompletado)
 router.get('/', searchPersonas);
+
+// GET /api/personas/:id/ventas -> Historial de compras de una persona
+router.get('/:id/ventas', getPersonaVentas);
 
 // GET /api/personas/:id     -> Ver detalle
 router.get('/:id', getPersonaById);

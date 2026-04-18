@@ -166,7 +166,70 @@ export const updatePersona = async (req, res) => {
 };
 
 // ==========================================
-// 5. ELIMINAR PERSONA (DELETE)
+// 5. HISTORIAL DE VENTAS POR PERSONA
+// ==========================================
+export const getPersonaVentas = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const businessId = req.user?.bid;
+
+        // Verificar que la persona pertenece al negocio
+        const check = await pool.query(
+            `SELECT id, nombre, apellido FROM personas WHERE id = $1 AND business_id = $2`,
+            [id, businessId]
+        );
+        if (check.rows.length === 0) return res.status(404).json({ message: "Persona no encontrada" });
+
+        // Obtener todos sus pedidos con detalle de productos
+        const pedidosRes = await pool.query(
+            `SELECT
+                p.id,
+                p.total,
+                p.estado,
+                p.created_at,
+                p.observaciones,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'producto',  i.nombre,
+                            'cantidad',  dp.cantidad,
+                            'precio',    dp.precio_unitario,
+                            'subtotal',  dp.cantidad * dp.precio_unitario
+                        ) ORDER BY i.nombre
+                    ) FILTER (WHERE i.id IS NOT NULL), '[]'
+                ) AS items
+            FROM pedidos p
+            LEFT JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+            LEFT JOIN inventario i       ON dp.inventario_id = i.id
+            WHERE p.persona_id = $1 AND p.business_id = $2
+            GROUP BY p.id
+            ORDER BY p.created_at DESC`,
+            [id, businessId]
+        );
+
+        const pedidos = pedidosRes.rows;
+
+        // Calcular resumen estadístico
+        const stats = {
+            total_pedidos:     pedidos.length,
+            total_gastado:     pedidos
+                                .filter(p => p.estado !== 'ANULADO')
+                                .reduce((s, p) => s + Number(p.total), 0),
+            pedidos_entregados: pedidos.filter(p => p.estado === 'ENTREGADO').length,
+            pedidos_pendientes: pedidos.filter(p => p.estado === 'PENDIENTE').length,
+            pedidos_anulados:   pedidos.filter(p => p.estado === 'ANULADO').length,
+        };
+
+        return res.status(200).json({ persona: check.rows[0], pedidos, stats });
+
+    } catch (error) {
+        console.error("Error obteniendo ventas de persona:", error);
+        return res.status(500).json({ message: "Error al obtener historial de ventas" });
+    }
+};
+
+// ==========================================
+// 6. ELIMINAR PERSONA (DELETE)
 // ==========================================
 export const deletePersona = async (req, res) => {
     const client = await pool.connect();

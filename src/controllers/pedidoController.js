@@ -276,9 +276,10 @@ export const updateEstadoPedido = async (req, res) => {
                 `INSERT INTO "public"."ingresos" (
                     "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
                     "producto", "valor", "cuenta", "customer_email", "payment_status",
-                    "payment_reference", "usuario", "business_id", "createdAt", "updatedAt", "__v", "comprobante_url"
+                    "payment_reference", "usuario", "business_id", "createdAt", "updatedAt", "__v", "comprobante_url",
+                    "persona_id", "pedido_id"
                  )
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
                 [
                     _idIngreso,
                     pedido.nombre  || 'Cliente Ocasional',
@@ -296,7 +297,9 @@ export const updateEstadoPedido = async (req, res) => {
                     createdAt.toISOString(),
                     createdAt.toISOString(),
                     '0',
-                    ''
+                    '',
+                    pedido.persona_id || null,
+                    Number(id)
                 ]
             );
         }
