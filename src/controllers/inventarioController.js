@@ -1,5 +1,6 @@
 import pool from '../database.js';
 import { uploadProductImageToGCS, deleteProductImageFromGCS } from '../services/gcsProductImages.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // ==========================================
 // 1. CREAR ÍTEM (CREATE)
@@ -465,7 +466,82 @@ export const uploadInventarioPhoto = async (req, res) => {
 };
 
 // ==========================================
-// 7. OBTENER POR NEGOCIO (ADMIN)
+// 7. SURTIR / RESTOCK
+// ==========================================
+export const restockInventario = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const { id } = req.params;
+        const { cantidad_a_agregar, precio_unitario_compra, cuenta, fecha, descripcion } = req.body;
+        const usuarioId  = req.user?.id;
+        const businessId = req.user?.bid;
+
+        if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio" });
+
+        const unidades = parseInt(cantidad_a_agregar);
+        if (!unidades || unidades <= 0) return res.status(400).json({ message: "La cantidad debe ser mayor a 0" });
+
+        const check = await client.query(
+            `SELECT id, nombre, cantidad, precio_compra_unitario FROM inventario WHERE id = $1 AND business_id = $2`,
+            [id, businessId]
+        );
+        if (check.rows.length === 0) return res.status(404).json({ message: "Producto no encontrado" });
+
+        const producto = check.rows[0];
+        const precioUnitario = parseFloat(precio_unitario_compra) || 0;
+        const valorTotal = precioUnitario * unidades;
+        const nuevaCantidad = (producto.cantidad || 0) + unidades;
+        const registrarEgreso = valorTotal > 0 && cuenta;
+
+        await client.query('BEGIN');
+
+        // 1. Actualizar stock
+        const updatedItem = await client.query(
+            `UPDATE inventario
+             SET cantidad = $1,
+                 precio_compra_unitario = CASE WHEN $2 > 0 THEN $2 ELSE precio_compra_unitario END,
+                 costo_compra           = CASE WHEN $2 > 0 THEN $2 ELSE costo_compra END,
+                 updated_at = NOW()
+             WHERE id = $3
+             RETURNING *`,
+            [nuevaCantidad, precioUnitario, id]
+        );
+
+        // 2. Crear egreso solo si hay valor
+        if (registrarEgreso) {
+            const fechaEgreso = fecha ? new Date(fecha).toISOString() : new Date().toISOString();
+            const descEgreso  = descripcion || `Compra de inventario: ${producto.nombre} (${unidades} und)`;
+            const now = new Date().toISOString();
+            await client.query(
+                `INSERT INTO "public"."egresos" ("_id","fecha","valor","cuenta","descripcion","usuario","business_id","createdAt","updatedAt","__v")
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0)`,
+                [uuidv4(), fechaEgreso, valorTotal, cuenta, descEgreso, usuarioId, businessId, now, now]
+            );
+        }
+
+        await client.query('COMMIT');
+
+        const msg = registrarEgreso
+            ? `Compra registrada. +${unidades} unidades y egreso de $${valorTotal.toLocaleString('es-CO')}.`
+            : `Stock actualizado. +${unidades} unidades agregadas sin costo.`;
+
+        return res.status(200).json({
+            message: msg,
+            data: updatedItem.rows[0],
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error en restock:', error);
+        return res.status(500).json({ message: 'Error al surtir el producto', error: error.message });
+    } finally {
+        client.release();
+    }
+};
+
+// ==========================================
+// 8. OBTENER POR NEGOCIO (ADMIN)
 // ==========================================
 export const getInventarioByUserId = async (req, res) => {
     const { userId } = req.params;

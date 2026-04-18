@@ -8,6 +8,7 @@ import {
     getInventarioByUserId,
     getInventarioItemStats,
     uploadInventarioPhoto,
+    restockInventario,
 } from '../controllers/inventarioController.js';
 
 import { authMiddleware } from '../middleware/authMiddleware.js';
@@ -27,6 +28,9 @@ router.delete('/',        deleteInventarioItem);
 
 // Stats e informe del producto
 router.get('/:id/stats',  getInventarioItemStats);
+
+// Surtir / Restock
+router.post('/:id/restock', restockInventario);
 
 // Subir foto de manera independiente (desde el modal de informe)
 router.post('/:id/foto',  upload.single('imagen'), uploadInventarioPhoto);
