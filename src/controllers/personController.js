@@ -16,11 +16,23 @@ export const createPersona = async (req, res) => {
 
         if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
-        if (!numero_documento || !nombre || !celular) {
-            return res.status(400).json({ message: "Nombre, Documento y Celular son obligatorios" });
+        if (!nombre) {
+            return res.status(400).json({ message: "El nombre es obligatorio" });
         }
 
         const createdAt = new Date().toISOString();
+
+        // Verificar duplicado solo dentro del mismo negocio
+        if (numero_documento) {
+            const dup = await client.query(
+                `SELECT id FROM "public"."personas" WHERE numero_documento = $1 AND business_id = $2 LIMIT 1`,
+                [numero_documento, businessId]
+            );
+            if (dup.rows.length > 0) {
+                client.release();
+                return res.status(409).json({ message: "Ya existe un contacto con ese número de documento en este negocio." });
+            }
+        }
 
         await client.query('BEGIN');
         const result = await client.query(
@@ -32,8 +44,8 @@ export const createPersona = async (req, res) => {
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
              RETURNING *;`,
             [
-                tipo_documento || 'CC', numero_documento, nombre,
-                apellido || '', direccion || '', celular,
+                tipo_documento || 'CC', numero_documento || null, nombre,
+                apellido || '', direccion || '', celular || '',
                 email || null, tipo || 'CLIENTE',
                 usuarioId, businessId, createdAt, createdAt
             ]
@@ -46,7 +58,7 @@ export const createPersona = async (req, res) => {
         await client.query('ROLLBACK');
         console.error("Error creando persona:", error);
         if (error.code === '23505') {
-            return res.status(409).json({ message: "Ya existe una persona registrada con ese número de documento." });
+            return res.status(409).json({ message: "Ya existe un contacto con ese número de documento en este negocio." });
         }
         return res.status(500).json({ message: "Error interno", error: error.message });
     } finally {
