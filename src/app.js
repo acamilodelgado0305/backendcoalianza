@@ -29,7 +29,8 @@ app.use(cors({
     'https://andesfront.onrender.com',
     'https://quickcontrola.com',
     'https://santasofia.vercel.app',
-    'https://rapictrl.com'
+    'https://rapictrl.com',
+    'https://certitec.vercel.app/servicios/curso-manipulacion-de-alimentos.html'
   ]
 }));
 app.use(compression());
