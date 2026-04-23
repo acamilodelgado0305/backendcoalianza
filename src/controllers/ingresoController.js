@@ -210,15 +210,17 @@ export const createIngresoPublico = async (req, res) => {
             await client.query(
                 `INSERT INTO "public"."personas" (
                     "tipo_documento", "numero_documento", "nombre", "apellido",
-                    "email", "tipo", "usuario", "business_id", "created_at", "updated_at"
+                    "celular", "direccion", "email", "tipo", "usuario", "business_id", "created_at", "updated_at"
                  )
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
                  ON CONFLICT DO NOTHING`,
                 [
                     tipoDocumentoFinal,
                     String(numeroDeDocumento),
                     nombre || 'Cliente',
                     apellido || '',
+                    '',
+                    '',
                     customer_email || null,
                     'CLIENTE',
                     usuarioId || String(businessId),
