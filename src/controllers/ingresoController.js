@@ -204,6 +204,31 @@ export const createIngresoPublico = async (req, res) => {
                 createdAt.toISOString(), createdAt.toISOString(), '0',
             ]
         );
+
+        // Registrar o ignorar si ya existe el contacto (upsert silencioso)
+        if (numeroDeDocumento && numeroDeDocumento !== '0') {
+            await client.query(
+                `INSERT INTO "public"."personas" (
+                    "tipo_documento", "numero_documento", "nombre", "apellido",
+                    "email", "tipo", "usuario", "business_id", "created_at", "updated_at"
+                 )
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 ON CONFLICT DO NOTHING`,
+                [
+                    tipoDocumentoFinal,
+                    String(numeroDeDocumento),
+                    nombre || 'Cliente',
+                    apellido || '',
+                    customer_email || null,
+                    'CLIENTE',
+                    usuarioId || String(businessId),
+                    businessId,
+                    createdAt.toISOString(),
+                    createdAt.toISOString(),
+                ]
+            );
+        }
+
         await client.query('COMMIT');
 
         return res.status(201).json({
