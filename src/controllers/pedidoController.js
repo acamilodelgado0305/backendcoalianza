@@ -25,7 +25,7 @@ export const createPedido = async (req, res) => {
 
         for (const item of items) {
             const prodRes = await client.query(
-                `SELECT id, nombre, monto, cantidad, tipo_programa
+                `SELECT id, nombre, monto, cantidad, tipo_programa, tipo_item
                  FROM "public"."inventario"
                  WHERE id = $1 AND business_id = $2
                  FOR UPDATE`,
@@ -37,7 +37,9 @@ export const createPedido = async (req, res) => {
             }
 
             const producto = prodRes.rows[0];
-            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa);
+            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa)
+                || producto.tipo_item === 'servicio'
+                || producto.cantidad === null;
 
             if (!esServicio && producto.cantidad < item.cantidad) {
                 throw new Error(`Stock insuficiente para '${producto.nombre}'. Disponible: ${producto.cantidad}`);
@@ -227,14 +229,16 @@ export const updateEstadoPedido = async (req, res) => {
         // CASO A: ANULADO → devolver stock
         if (nuevo_estado === 'ANULADO' && estadoActual !== 'ANULADO') {
             const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa
+                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
                  FROM "public"."detalle_pedidos" dp
                  JOIN "public"."inventario" i ON dp.inventario_id = i.id
                  WHERE dp.pedido_id = $1`,
                 [id]
             );
             for (const item of itemsRes.rows) {
-                if (!['Validacion', 'Tecnico'].includes(item.tipo_programa)) {
+                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
+                    || item.tipo_item === 'servicio';
+                if (!esServicio) {
                     await client.query(
                         `UPDATE "public"."inventario" SET cantidad = cantidad + $1 WHERE id = $2`,
                         [item.cantidad, item.inventario_id]
@@ -245,14 +249,17 @@ export const updateEstadoPedido = async (req, res) => {
         // CASO B: REACTIVADO desde ANULADO → descontar stock
         else if (estadoActual === 'ANULADO' && nuevo_estado !== 'ANULADO') {
             const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.cantidad as stock_actual, i.tipo_programa
+                `SELECT dp.inventario_id, dp.cantidad, i.cantidad as stock_actual, i.tipo_programa, i.tipo_item
                  FROM "public"."detalle_pedidos" dp
                  JOIN "public"."inventario" i ON dp.inventario_id = i.id
                  WHERE dp.pedido_id = $1`,
                 [id]
             );
             for (const item of itemsRes.rows) {
-                if (!['Validacion', 'Tecnico'].includes(item.tipo_programa)) {
+                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
+                    || item.tipo_item === 'servicio'
+                    || item.stock_actual === null;
+                if (!esServicio) {
                     if (item.stock_actual < item.cantidad) {
                         throw new Error(`No se puede reactivar: Stock insuficiente para producto ID ${item.inventario_id}`);
                     }
@@ -348,14 +355,16 @@ export const deletePedido = async (req, res) => {
 
         if (checkRes.rows[0].estado !== 'ANULADO') {
             const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa
+                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
                  FROM "public"."detalle_pedidos" dp
                  JOIN "public"."inventario" i ON dp.inventario_id = i.id
                  WHERE dp.pedido_id = $1`,
                 [id]
             );
             for (const item of itemsRes.rows) {
-                if (!['Validacion', 'Tecnico'].includes(item.tipo_programa)) {
+                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
+                    || item.tipo_item === 'servicio';
+                if (!esServicio) {
                     await client.query(
                         `UPDATE "public"."inventario" SET cantidad = cantidad + $1 WHERE id = $2`,
                         [item.cantidad, item.inventario_id]
@@ -400,14 +409,16 @@ export const updatePedido = async (req, res) => {
 
         // Restaurar stock anterior
         const oldItemsRes = await client.query(
-            `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa
+            `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
              FROM detalle_pedidos dp
              JOIN inventario i ON dp.inventario_id = i.id
              WHERE dp.pedido_id = $1`,
             [id]
         );
         for (const oldItem of oldItemsRes.rows) {
-            if (!['Validacion', 'Tecnico'].includes(oldItem.tipo_programa)) {
+            const esServicio = ['Validacion', 'Tecnico'].includes(oldItem.tipo_programa)
+                || oldItem.tipo_item === 'servicio';
+            if (!esServicio) {
                 await client.query(
                     `UPDATE inventario SET cantidad = cantidad + $1 WHERE id = $2`,
                     [oldItem.cantidad, oldItem.inventario_id]
@@ -420,11 +431,13 @@ export const updatePedido = async (req, res) => {
         let nuevoTotal = 0;
         for (const newItem of items) {
             const prodRes = await client.query(
-                `SELECT id, monto, cantidad, tipo_programa FROM inventario WHERE id = $1 AND business_id = $2`,
+                `SELECT id, monto, cantidad, tipo_programa, tipo_item FROM inventario WHERE id = $1 AND business_id = $2`,
                 [newItem.inventario_id, businessId]
             );
             const producto = prodRes.rows[0];
-            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa);
+            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa)
+                || producto.tipo_item === 'servicio'
+                || producto.cantidad === null;
 
             if (!esServicio && producto.cantidad < newItem.cantidad) {
                 throw new Error(`Stock insuficiente para producto ID ${producto.id}`);
