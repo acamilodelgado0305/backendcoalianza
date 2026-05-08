@@ -13,6 +13,7 @@ import clientRoutes from './routes/clientRoutes.js';
 import personRoutes from './routes/personRoutes.js';
 import inventarioRoutes from './routes/inventarioRouter.js';
 import pedidoRoutes from './routes/pedidoRoutes.js';
+import documentoVentaRoutes from './routes/documentoVentaRoutes.js';
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ app.use('/api/personas', personRoutes);
 app.use('/api/inventario', inventarioRoutes);
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api', clientRoutes);
+app.use('/api/documentos-venta', documentoVentaRoutes);
 
 // Conectar a la base de datos
 
