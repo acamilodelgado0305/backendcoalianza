@@ -6,7 +6,6 @@ import compression from 'compression';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import connectDB from './database.js';
 import ingresoRoutes from './routes/ingresoRoutes.js';
 import egresoRoutes from './routes/egresoRoutes.js';
 import clientRoutes from './routes/clientRoutes.js';

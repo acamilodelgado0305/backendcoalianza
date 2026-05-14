@@ -1,11 +1,16 @@
-import pool from "../database.js";
+import prisma from '../prisma.js';
+import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
+
+const esProductoServicio = (p) =>
+    ['Validacion', 'Tecnico'].includes(p.tipo_programa) ||
+    p.tipo_item === 'servicio' ||
+    p.cantidad === null;
 
 // ==========================================
 // 1. CREAR PEDIDO (CREATE)
 // ==========================================
 export const createPedido = async (req, res) => {
-    const client = await pool.connect();
     try {
         const { persona_id, items, observaciones } = req.body;
         const usuarioId  = req.user?.id;
@@ -18,81 +23,60 @@ export const createPedido = async (req, res) => {
             return res.status(400).json({ message: "El pedido debe contener al menos un producto" });
         }
 
-        await client.query('BEGIN');
+        const result = await prisma.$transaction(async (tx) => {
+            let totalPedido = 0;
+            const itemsProcesados = [];
 
-        let totalPedido = 0;
-        const itemsProcesados = [];
+            for (const item of items) {
+                const producto = await tx.inventario.findFirst({
+                    where: { id: item.inventario_id, business_id: businessId },
+                });
+                if (!producto) throw new Error(`Producto ID ${item.inventario_id} no encontrado o no autorizado.`);
 
-        for (const item of items) {
-            const prodRes = await client.query(
-                `SELECT id, nombre, monto, cantidad, tipo_programa, tipo_item
-                 FROM "public"."inventario"
-                 WHERE id = $1 AND business_id = $2
-                 FOR UPDATE`,
-                [item.inventario_id, businessId]
-            );
+                const esServicio = esProductoServicio(producto);
+                if (!esServicio && producto.cantidad < item.cantidad) {
+                    throw new Error(`Stock insuficiente para '${producto.nombre}'. Disponible: ${producto.cantidad}`);
+                }
 
-            if (prodRes.rows.length === 0) {
-                throw new Error(`Producto ID ${item.inventario_id} no encontrado o no autorizado.`);
+                const precioUnitario = Number(producto.monto);
+                totalPedido += precioUnitario * item.cantidad;
+                itemsProcesados.push({ producto, cantidad: item.cantidad, precioUnitario, esServicio });
             }
 
-            const producto = prodRes.rows[0];
-            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa)
-                || producto.tipo_item === 'servicio'
-                || producto.cantidad === null;
-
-            if (!esServicio && producto.cantidad < item.cantidad) {
-                throw new Error(`Stock insuficiente para '${producto.nombre}'. Disponible: ${producto.cantidad}`);
-            }
-
-            const precioUnitario = Number(producto.monto);
-            totalPedido += precioUnitario * item.cantidad;
-
-            itemsProcesados.push({
-                inventario_id: producto.id,
-                cantidad: item.cantidad,
-                precio_unitario: precioUnitario,
-                es_servicio: esServicio
+            const pedido = await tx.pedidos.create({
+                data: {
+                    persona_id,
+                    user_id:      usuarioId,
+                    business_id:  businessId,
+                    total:        totalPedido,
+                    observaciones: observaciones || null,
+                },
             });
-        }
 
-        const pedidoRes = await client.query(
-            `INSERT INTO "public"."pedidos"
-             ("persona_id", "user_id", "business_id", "total", "estado", "observaciones", "created_at", "updated_at")
-             VALUES ($1, $2, $3, $4, 'PENDIENTE', $5, NOW(), NOW())
-             RETURNING id`,
-            [persona_id, usuarioId, businessId, totalPedido, observaciones]
-        );
-        const pedidoId = pedidoRes.rows[0].id;
-
-        for (const item of itemsProcesados) {
-            await client.query(
-                `INSERT INTO "public"."detalle_pedidos"
-                 ("pedido_id", "inventario_id", "cantidad", "precio_unitario")
-                 VALUES ($1, $2, $3, $4)`,
-                [pedidoId, item.inventario_id, item.cantidad, item.precio_unitario]
-            );
-            if (!item.es_servicio) {
-                await client.query(
-                    `UPDATE "public"."inventario" SET cantidad = cantidad - $1, updated_at = NOW() WHERE id = $2`,
-                    [item.cantidad, item.inventario_id]
-                );
+            for (const item of itemsProcesados) {
+                await tx.detalle_pedidos.create({
+                    data: {
+                        pedido_id:      pedido.id,
+                        inventario_id:  item.producto.id,
+                        cantidad:       item.cantidad,
+                        precio_unitario: item.precioUnitario,
+                    },
+                });
+                if (!item.esServicio) {
+                    await tx.inventario.update({
+                        where: { id: item.producto.id },
+                        data:  { cantidad: { decrement: item.cantidad }, updated_at: new Date() },
+                    });
+                }
             }
-        }
 
-        await client.query('COMMIT');
-        return res.status(201).json({
-            success: true,
-            message: "Pedido creado exitosamente",
-            data: { pedido_id: pedidoId, total: totalPedido }
+            return { pedido_id: pedido.id, total: totalPedido };
         });
 
+        return res.status(201).json({ success: true, message: "Pedido creado exitosamente", data: result });
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error("Error creando pedido:", error);
         return res.status(500).json({ message: error.message || "Error interno al crear pedido" });
-    } finally {
-        client.release();
     }
 };
 
@@ -104,49 +88,42 @@ export const getPedidos = async (req, res) => {
         const businessId = req.user?.bid;
         const { estado, cierre_id } = req.query;
 
-        let whereClause = `WHERE p.business_id = $1`;
-        const values = [businessId];
-        let counter = 2;
+        // json_agg con ORDER BY dentro del aggregate requiere $queryRaw
+        const conditions = [Prisma.sql`p.business_id = ${businessId}`];
 
         if (cierre_id) {
-            whereClause += ` AND p.cierre_id = $${counter}`;
-            values.push(cierre_id);
-            counter++;
+            conditions.push(Prisma.sql`p.cierre_id = ${Number(cierre_id)}`);
         } else {
-            whereClause += ` AND p.cierre_id IS NULL`;
+            conditions.push(Prisma.sql`p.cierre_id IS NULL`);
         }
+        if (estado) conditions.push(Prisma.sql`p.estado = ${estado}`);
 
-        if (estado) {
-            whereClause += ` AND p.estado = $${counter}`;
-            values.push(estado);
-            counter++;
-        }
+        const whereClause = Prisma.join(conditions, ' AND ');
 
-        const query = `
+        const rows = await prisma.$queryRaw(Prisma.sql`
             SELECT
                 p.id, p.total, p.estado, p.created_at, p.observaciones, p.cierre_id,
-                pe.nombre as cliente_nombre, pe.apellido as cliente_apellido,
+                pe.nombre  AS cliente_nombre,
+                pe.apellido AS cliente_apellido,
                 COALESCE(
                     json_agg(
                         json_build_object(
                             'producto', i.nombre,
                             'cantidad', dp.cantidad,
-                            'precio', dp.precio_unitario
+                            'precio',   dp.precio_unitario
                         )
                     ) FILTER (WHERE i.id IS NOT NULL), '[]'
-                ) as items_detalle
-            FROM "public"."pedidos" p
-            JOIN "public"."personas" pe ON p.persona_id = pe.id
-            LEFT JOIN "public"."detalle_pedidos" dp ON p.id = dp.pedido_id
-            LEFT JOIN "public"."inventario" i ON dp.inventario_id = i.id
-            ${whereClause}
+                ) AS items_detalle
+            FROM pedidos p
+            JOIN personas pe ON p.persona_id = pe.id
+            LEFT JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+            LEFT JOIN inventario i       ON dp.inventario_id = i.id
+            WHERE ${whereClause}
             GROUP BY p.id, pe.id
             ORDER BY p.created_at DESC
-        `;
+        `);
 
-        const result = await pool.query(query, values);
-        return res.status(200).json({ data: result.rows });
-
+        return res.status(200).json({ data: rows });
     } catch (error) {
         console.error("Error obteniendo pedidos:", error);
         return res.status(500).json({ message: "Error al listar pedidos" });
@@ -161,29 +138,38 @@ export const getPedidoById = async (req, res) => {
         const { id } = req.params;
         const businessId = req.user?.bid;
 
-        const cabeceraRes = await pool.query(
-            `SELECT p.*, pe.nombre as cliente_nombre, pe.apellido as cliente_apellido,
-                    pe.numero_documento, pe.tipo_documento
-             FROM "public"."pedidos" p
-             JOIN "public"."personas" pe ON p.persona_id = pe.id
-             WHERE p.id = $1 AND p.business_id = $2`,
-            [id, businessId]
-        );
+        const pedido = await prisma.pedidos.findFirst({
+            where: { id: Number(id), business_id: businessId },
+            include: {
+                personas: {
+                    select: { nombre: true, apellido: true, numero_documento: true, tipo_documento: true },
+                },
+                detalle_pedidos: {
+                    include: {
+                        inventario: { select: { nombre: true, codigo_barras: true } },
+                    },
+                },
+            },
+        });
 
-        if (cabeceraRes.rows.length === 0) {
-            return res.status(404).json({ message: "Pedido no encontrado" });
-        }
+        if (!pedido) return res.status(404).json({ message: "Pedido no encontrado" });
 
-        const itemsRes = await pool.query(
-            `SELECT dp.*, i.nombre as producto_nombre, i.codigo_barras
-             FROM "public"."detalle_pedidos" dp
-             JOIN "public"."inventario" i ON dp.inventario_id = i.id
-             WHERE dp.pedido_id = $1`,
-            [id]
-        );
-
-        return res.status(200).json({ pedido: cabeceraRes.rows[0], items: itemsRes.rows });
-
+        // Aplanar para mantener la misma forma de respuesta
+        const { personas, detalle_pedidos, ...cabecera } = pedido;
+        return res.status(200).json({
+            pedido: {
+                ...cabecera,
+                cliente_nombre:    personas?.nombre,
+                cliente_apellido:  personas?.apellido,
+                numero_documento:  personas?.numero_documento,
+                tipo_documento:    personas?.tipo_documento,
+            },
+            items: detalle_pedidos.map(dp => ({
+                ...dp,
+                producto_nombre: dp.inventario?.nombre,
+                codigo_barras:   dp.inventario?.codigo_barras,
+            })),
+        });
     } catch (error) {
         console.error("Error obteniendo detalle pedido:", error);
         return res.status(500).json({ message: "Error interno" });
@@ -194,7 +180,6 @@ export const getPedidoById = async (req, res) => {
 // 4. CAMBIAR ESTADO DE PEDIDO (UPDATE STATUS)
 // ==========================================
 export const updateEstadoPedido = async (req, res) => {
-    const client = await pool.connect();
     try {
         const { id } = req.params;
         const nuevo_estado   = req.body.nuevo_estado || req.body.estado;
@@ -206,129 +191,103 @@ export const updateEstadoPedido = async (req, res) => {
             return res.status(400).json({ message: "Estado no válido" });
         }
 
-        await client.query('BEGIN');
+        const updatedPedido = await prisma.$transaction(async (tx) => {
+            const pedido = await tx.pedidos.findFirst({
+                where: { id: Number(id), business_id: businessId },
+                include: { personas: { select: { nombre: true, apellido: true, numero_documento: true, email: true } } },
+            });
+            if (!pedido) throw Object.assign(new Error("Pedido no encontrado"), { status: 404 });
 
-        const checkRes = await client.query(
-            `SELECT p.estado, p.total, p.persona_id,
-                    per.nombre, per.apellido, per.numero_documento, per.email
-             FROM "public"."pedidos" p
-             LEFT JOIN "public"."personas" per ON p.persona_id = per.id
-             WHERE p.id = $1 AND p.business_id = $2
-             FOR UPDATE OF p`,
-            [id, businessId]
-        );
+            const estadoActual = pedido.estado;
 
-        if (checkRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: "Pedido no encontrado" });
-        }
-
-        const pedido = checkRes.rows[0];
-        const estadoActual = pedido.estado;
-
-        // CASO A: ANULADO → devolver stock
-        if (nuevo_estado === 'ANULADO' && estadoActual !== 'ANULADO') {
-            const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
-                 FROM "public"."detalle_pedidos" dp
-                 JOIN "public"."inventario" i ON dp.inventario_id = i.id
-                 WHERE dp.pedido_id = $1`,
-                [id]
-            );
-            for (const item of itemsRes.rows) {
-                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
-                    || item.tipo_item === 'servicio';
-                if (!esServicio) {
-                    await client.query(
-                        `UPDATE "public"."inventario" SET cantidad = cantidad + $1 WHERE id = $2`,
-                        [item.cantidad, item.inventario_id]
-                    );
-                }
-            }
-        }
-        // CASO B: REACTIVADO desde ANULADO → descontar stock
-        else if (estadoActual === 'ANULADO' && nuevo_estado !== 'ANULADO') {
-            const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.cantidad as stock_actual, i.tipo_programa, i.tipo_item
-                 FROM "public"."detalle_pedidos" dp
-                 JOIN "public"."inventario" i ON dp.inventario_id = i.id
-                 WHERE dp.pedido_id = $1`,
-                [id]
-            );
-            for (const item of itemsRes.rows) {
-                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
-                    || item.tipo_item === 'servicio'
-                    || item.stock_actual === null;
-                if (!esServicio) {
-                    if (item.stock_actual < item.cantidad) {
-                        throw new Error(`No se puede reactivar: Stock insuficiente para producto ID ${item.inventario_id}`);
+            // CASO A: → ANULADO (devolver stock)
+            if (nuevo_estado === 'ANULADO' && estadoActual !== 'ANULADO') {
+                const detalles = await tx.detalle_pedidos.findMany({
+                    where: { pedido_id: Number(id) },
+                    include: { inventario: { select: { tipo_programa: true, tipo_item: true } } },
+                });
+                for (const dp of detalles) {
+                    if (!esProductoServicio(dp.inventario)) {
+                        await tx.inventario.update({
+                            where: { id: dp.inventario_id },
+                            data:  { cantidad: { increment: dp.cantidad } },
+                        });
                     }
-                    await client.query(
-                        `UPDATE "public"."inventario" SET cantidad = cantidad - $1 WHERE id = $2`,
-                        [item.cantidad, item.inventario_id]
-                    );
                 }
             }
-        }
 
-        // Crear ingreso al entregar
-        if (nuevo_estado === 'ENTREGADO' && estadoActual !== 'ENTREGADO') {
-            const cuentaFinal = cuenta_destino || 'Caja General';
-            const _idIngreso = uuidv4();
-            const createdAt = new Date();
-            const fechaVencimiento = new Date(createdAt);
-            fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
+            // CASO B: ANULADO → reactivar (descontar stock)
+            if (estadoActual === 'ANULADO' && nuevo_estado !== 'ANULADO') {
+                const detalles = await tx.detalle_pedidos.findMany({
+                    where: { pedido_id: Number(id) },
+                    include: { inventario: { select: { cantidad: true, tipo_programa: true, tipo_item: true } } },
+                });
+                for (const dp of detalles) {
+                    if (!esProductoServicio(dp.inventario)) {
+                        if ((dp.inventario.cantidad ?? 0) < dp.cantidad) {
+                            throw new Error(`No se puede reactivar: Stock insuficiente para producto ID ${dp.inventario_id}`);
+                        }
+                        await tx.inventario.update({
+                            where: { id: dp.inventario_id },
+                            data:  { cantidad: { decrement: dp.cantidad } },
+                        });
+                    }
+                }
+            }
 
-            await client.query(
-                `INSERT INTO "public"."ingresos" (
-                    "_id", "nombre", "apellido", "numeroDeDocumento", "fechaVencimiento",
-                    "producto", "valor", "cuenta", "customer_email", "payment_status",
-                    "payment_reference", "usuario", "business_id", "createdAt", "updatedAt", "__v", "comprobante_url",
-                    "persona_id", "pedido_id"
-                 )
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-                [
-                    _idIngreso,
-                    pedido.nombre  || 'Cliente Ocasional',
-                    pedido.apellido || '',
-                    pedido.numero_documento || '0',
-                    fechaVencimiento.toISOString(),
-                    `Venta POS - Pedido #${id}`,
-                    String(pedido.total),
-                    cuentaFinal,
-                    pedido.email || '',
-                    'APPROVED',
-                    `PEDIDO-${id}-${Date.now()}`,
-                    usuarioId,
-                    businessId,
-                    createdAt.toISOString(),
-                    createdAt.toISOString(),
-                    '0',
-                    '',
-                    pedido.persona_id || null,
-                    Number(id)
-                ]
-            );
-        }
+            // CASO C: → ENTREGADO (crear ingreso)
+            if (nuevo_estado === 'ENTREGADO' && estadoActual !== 'ENTREGADO') {
+                const cuentaFinal  = cuenta_destino || 'Caja General';
+                const ingresoId    = uuidv4();
+                const createdAt    = new Date();
+                const fechaVenc    = new Date(createdAt);
+                fechaVenc.setFullYear(fechaVenc.getFullYear() + 1);
 
-        const result = await client.query(
-            `UPDATE "public"."pedidos" SET estado = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-            [nuevo_estado, id]
-        );
+                await tx.$executeRaw(Prisma.sql`
+                    INSERT INTO "public"."ingresos" (
+                        "_id","nombre","apellido","numeroDeDocumento","fechaVencimiento",
+                        "producto","valor","cuenta","customer_email","payment_status",
+                        "payment_reference","usuario","business_id","createdAt","updatedAt","__v",
+                        "comprobante_url","persona_id","pedido_id"
+                    ) VALUES (
+                        ${ingresoId},
+                        ${pedido.personas?.nombre  || 'Cliente Ocasional'},
+                        ${pedido.personas?.apellido || ''},
+                        ${pedido.personas?.numero_documento || '0'},
+                        ${fechaVenc.toISOString()},
+                        ${'Venta POS - Pedido #' + id},
+                        ${String(pedido.total)},
+                        ${cuentaFinal},
+                        ${pedido.personas?.email || ''},
+                        ${'APPROVED'},
+                        ${'PEDIDO-' + id + '-' + Date.now()},
+                        ${usuarioId},
+                        ${businessId},
+                        ${createdAt.toISOString()},
+                        ${createdAt.toISOString()},
+                        ${'0'},
+                        ${''},
+                        ${pedido.persona_id},
+                        ${Number(id)}
+                    )
+                `);
+            }
 
-        await client.query('COMMIT');
+            return tx.pedidos.update({
+                where: { id: Number(id) },
+                data:  { estado: nuevo_estado, updated_at: new Date() },
+            });
+        });
+
         return res.status(200).json({
             success: true,
             message: `Pedido actualizado a ${nuevo_estado}`,
-            data: result.rows[0]
+            data: updatedPedido,
         });
-
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error("Error actualizando estado:", error);
-        return res.status(500).json({ message: error.message || "Error al actualizar estado" });
-    } finally {
-        client.release();
+        const status = error.status || 500;
+        return res.status(status).json({ message: error.message || "Error al actualizar estado" });
     }
 };
 
@@ -336,54 +295,40 @@ export const updateEstadoPedido = async (req, res) => {
 // 5. ELIMINAR PEDIDO (DELETE)
 // ==========================================
 export const deletePedido = async (req, res) => {
-    const client = await pool.connect();
     try {
         const { id } = req.params;
         const businessId = req.user?.bid;
 
-        await client.query('BEGIN');
+        await prisma.$transaction(async (tx) => {
+            const pedido = await tx.pedidos.findFirst({
+                where: { id: Number(id), business_id: businessId },
+                select: { estado: true },
+            });
+            if (!pedido) throw Object.assign(new Error("Pedido no encontrado"), { status: 404 });
 
-        const checkRes = await client.query(
-            `SELECT estado FROM "public"."pedidos" WHERE id = $1 AND business_id = $2`,
-            [id, businessId]
-        );
-
-        if (checkRes.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ message: "Pedido no encontrado" });
-        }
-
-        if (checkRes.rows[0].estado !== 'ANULADO') {
-            const itemsRes = await client.query(
-                `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
-                 FROM "public"."detalle_pedidos" dp
-                 JOIN "public"."inventario" i ON dp.inventario_id = i.id
-                 WHERE dp.pedido_id = $1`,
-                [id]
-            );
-            for (const item of itemsRes.rows) {
-                const esServicio = ['Validacion', 'Tecnico'].includes(item.tipo_programa)
-                    || item.tipo_item === 'servicio';
-                if (!esServicio) {
-                    await client.query(
-                        `UPDATE "public"."inventario" SET cantidad = cantidad + $1 WHERE id = $2`,
-                        [item.cantidad, item.inventario_id]
-                    );
+            if (pedido.estado !== 'ANULADO') {
+                const detalles = await tx.detalle_pedidos.findMany({
+                    where: { pedido_id: Number(id) },
+                    include: { inventario: { select: { tipo_programa: true, tipo_item: true } } },
+                });
+                for (const dp of detalles) {
+                    if (!esProductoServicio(dp.inventario)) {
+                        await tx.inventario.update({
+                            where: { id: dp.inventario_id },
+                            data:  { cantidad: { increment: dp.cantidad } },
+                        });
+                    }
                 }
             }
-        }
 
-        await client.query(`DELETE FROM "public"."pedidos" WHERE id = $1`, [id]);
-        await client.query('COMMIT');
+            await tx.pedidos.delete({ where: { id: Number(id) } });
+        });
 
         return res.status(200).json({ message: "Pedido eliminado y stock restaurado correctamente" });
-
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error("Error eliminando pedido:", error);
-        return res.status(500).json({ message: "Error interno al eliminar pedido" });
-    } finally {
-        client.release();
+        const status = error.status || 500;
+        return res.status(status).json({ message: error.message || "Error interno al eliminar pedido" });
     }
 };
 
@@ -391,89 +336,66 @@ export const deletePedido = async (req, res) => {
 // 6. ACTUALIZAR PEDIDO (UPDATE)
 // ==========================================
 export const updatePedido = async (req, res) => {
-    const client = await pool.connect();
     try {
         const { id } = req.params;
         const { persona_id, items, observaciones } = req.body;
         const businessId = req.user?.bid;
 
-        await client.query('BEGIN');
+        await prisma.$transaction(async (tx) => {
+            const pedido = await tx.pedidos.findFirst({
+                where: { id: Number(id), business_id: businessId },
+                select: { estado: true },
+            });
+            if (!pedido) throw new Error("Pedido no encontrado");
+            if (pedido.estado !== 'PENDIENTE') throw new Error("Solo se pueden editar pedidos PENDIENTES");
 
-        const checkRes = await client.query(
-            `SELECT estado FROM pedidos WHERE id = $1 AND business_id = $2 FOR UPDATE`,
-            [id, businessId]
-        );
-
-        if (checkRes.rows.length === 0) throw new Error("Pedido no encontrado");
-        if (checkRes.rows[0].estado !== 'PENDIENTE') throw new Error("Solo se pueden editar pedidos PENDIENTES");
-
-        // Restaurar stock anterior
-        const oldItemsRes = await client.query(
-            `SELECT dp.inventario_id, dp.cantidad, i.tipo_programa, i.tipo_item
-             FROM detalle_pedidos dp
-             JOIN inventario i ON dp.inventario_id = i.id
-             WHERE dp.pedido_id = $1`,
-            [id]
-        );
-        for (const oldItem of oldItemsRes.rows) {
-            const esServicio = ['Validacion', 'Tecnico'].includes(oldItem.tipo_programa)
-                || oldItem.tipo_item === 'servicio';
-            if (!esServicio) {
-                await client.query(
-                    `UPDATE inventario SET cantidad = cantidad + $1 WHERE id = $2`,
-                    [oldItem.cantidad, oldItem.inventario_id]
-                );
-            }
-        }
-
-        await client.query(`DELETE FROM detalle_pedidos WHERE pedido_id = $1`, [id]);
-
-        let nuevoTotal = 0;
-        for (const newItem of items) {
-            const prodRes = await client.query(
-                `SELECT id, monto, cantidad, tipo_programa, tipo_item FROM inventario WHERE id = $1 AND business_id = $2`,
-                [newItem.inventario_id, businessId]
-            );
-            const producto = prodRes.rows[0];
-            const esServicio = ['Validacion', 'Tecnico'].includes(producto.tipo_programa)
-                || producto.tipo_item === 'servicio'
-                || producto.cantidad === null;
-
-            if (!esServicio && producto.cantidad < newItem.cantidad) {
-                throw new Error(`Stock insuficiente para producto ID ${producto.id}`);
+            // Restaurar stock anterior
+            const oldDetalles = await tx.detalle_pedidos.findMany({
+                where: { pedido_id: Number(id) },
+                include: { inventario: { select: { tipo_programa: true, tipo_item: true } } },
+            });
+            for (const dp of oldDetalles) {
+                if (!esProductoServicio(dp.inventario)) {
+                    await tx.inventario.update({
+                        where: { id: dp.inventario_id },
+                        data:  { cantidad: { increment: dp.cantidad } },
+                    });
+                }
             }
 
-            const subtotal = Number(producto.monto) * newItem.cantidad;
-            nuevoTotal += subtotal;
+            await tx.detalle_pedidos.deleteMany({ where: { pedido_id: Number(id) } });
 
-            await client.query(
-                `INSERT INTO detalle_pedidos (pedido_id, inventario_id, cantidad, precio_unitario)
-                 VALUES ($1, $2, $3, $4)`,
-                [id, producto.id, newItem.cantidad, producto.monto]
-            );
-
-            if (!esServicio) {
-                await client.query(
-                    `UPDATE inventario SET cantidad = cantidad - $1, updated_at = NOW() WHERE id = $2`,
-                    [newItem.cantidad, producto.id]
-                );
+            let nuevoTotal = 0;
+            for (const newItem of items) {
+                const producto = await tx.inventario.findFirst({
+                    where: { id: newItem.inventario_id, business_id: businessId },
+                });
+                const esServicio = esProductoServicio(producto);
+                if (!esServicio && producto.cantidad < newItem.cantidad) {
+                    throw new Error(`Stock insuficiente para producto ID ${producto.id}`);
+                }
+                nuevoTotal += Number(producto.monto) * newItem.cantidad;
+                await tx.detalle_pedidos.create({
+                    data: { pedido_id: Number(id), inventario_id: producto.id, cantidad: newItem.cantidad, precio_unitario: producto.monto },
+                });
+                if (!esServicio) {
+                    await tx.inventario.update({
+                        where: { id: producto.id },
+                        data:  { cantidad: { decrement: newItem.cantidad }, updated_at: new Date() },
+                    });
+                }
             }
-        }
 
-        await client.query(
-            `UPDATE pedidos SET persona_id = $1, total = $2, observaciones = $3, updated_at = NOW() WHERE id = $4`,
-            [persona_id, nuevoTotal, observaciones, id]
-        );
+            await tx.pedidos.update({
+                where: { id: Number(id) },
+                data:  { persona_id, total: nuevoTotal, observaciones, updated_at: new Date() },
+            });
+        });
 
-        await client.query('COMMIT');
-        res.json({ success: true, message: "Pedido actualizado correctamente" });
-
+        return res.json({ success: true, message: "Pedido actualizado correctamente" });
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error(error);
-        res.status(500).json({ message: error.message });
-    } finally {
-        client.release();
+        return res.status(500).json({ message: error.message });
     }
 };
 
@@ -484,48 +406,43 @@ export const getOrderStats = async (req, res) => {
     try {
         const businessId = req.user?.bid;
 
-        const [kpiRes, estadoRes, productosRes, unidadesRes] = await Promise.all([
-            pool.query(
-                `SELECT COUNT(*) as total_pedidos, COALESCE(SUM(total), 0) as total_ingresos
-                 FROM pedidos WHERE business_id = $1 AND cierre_id IS NULL`,
-                [businessId]
-            ),
-            pool.query(
-                `SELECT estado, COUNT(*) as cantidad FROM pedidos
-                 WHERE business_id = $1 AND cierre_id IS NULL GROUP BY estado`,
-                [businessId]
-            ),
-            pool.query(
-                `SELECT i.nombre, SUM(dp.cantidad) as total_vendido
-                 FROM detalle_pedidos dp
-                 JOIN pedidos p ON dp.pedido_id = p.id
-                 JOIN inventario i ON dp.inventario_id = i.id
-                 WHERE p.business_id = $1 AND p.estado != 'ANULADO' AND p.cierre_id IS NULL
-                 GROUP BY i.nombre ORDER BY total_vendido DESC LIMIT 5`,
-                [businessId]
-            ),
-            pool.query(
-                `SELECT COALESCE(SUM(dp.cantidad), 0) as total_unidades
-                 FROM detalle_pedidos dp
-                 JOIN pedidos p ON dp.pedido_id = p.id
-                 WHERE p.business_id = $1 AND p.estado != 'ANULADO' AND p.cierre_id IS NULL`,
-                [businessId]
-            )
+        const [kpiRows, estadoRows, productosRows, unidadesRows] = await Promise.all([
+            prisma.$queryRaw(Prisma.sql`
+                SELECT COUNT(*)::int AS total_pedidos, COALESCE(SUM(total), 0) AS total_ingresos
+                FROM pedidos WHERE business_id = ${businessId} AND cierre_id IS NULL
+            `),
+            prisma.$queryRaw(Prisma.sql`
+                SELECT estado, COUNT(*)::int AS cantidad FROM pedidos
+                WHERE business_id = ${businessId} AND cierre_id IS NULL GROUP BY estado
+            `),
+            prisma.$queryRaw(Prisma.sql`
+                SELECT i.nombre, SUM(dp.cantidad)::int AS total_vendido
+                FROM detalle_pedidos dp
+                JOIN pedidos p    ON dp.pedido_id    = p.id
+                JOIN inventario i ON dp.inventario_id = i.id
+                WHERE p.business_id = ${businessId} AND p.estado != 'ANULADO' AND p.cierre_id IS NULL
+                GROUP BY i.nombre ORDER BY total_vendido DESC LIMIT 5
+            `),
+            prisma.$queryRaw(Prisma.sql`
+                SELECT COALESCE(SUM(dp.cantidad), 0)::int AS total_unidades
+                FROM detalle_pedidos dp
+                JOIN pedidos p ON dp.pedido_id = p.id
+                WHERE p.business_id = ${businessId} AND p.estado != 'ANULADO' AND p.cierre_id IS NULL
+            `),
         ]);
 
-        res.json({
+        return res.json({
             general: {
-                total_pedidos: parseInt(kpiRes.rows[0]?.total_pedidos || 0),
-                total_ingresos: Number(kpiRes.rows[0]?.total_ingresos || 0),
-                total_unidades: parseInt(unidadesRes.rows[0]?.total_unidades || 0)
+                total_pedidos:  kpiRows[0]?.total_pedidos  || 0,
+                total_ingresos: Number(kpiRows[0]?.total_ingresos || 0),
+                total_unidades: unidadesRows[0]?.total_unidades || 0,
             },
-            por_estado: estadoRes.rows.map(r => ({ name: r.estado, value: parseInt(r.cantidad) })),
-            top_productos: productosRes.rows.map(r => ({ name: r.nombre, cantidad: parseInt(r.total_vendido) }))
+            por_estado:    estadoRows.map(r => ({ name: r.estado, value: r.cantidad })),
+            top_productos: productosRows.map(r => ({ name: r.nombre, cantidad: r.total_vendido })),
         });
-
     } catch (error) {
         console.error("Error en estadísticas:", error);
-        res.status(500).json({ message: "Error calculando estadísticas" });
+        return res.status(500).json({ message: "Error calculando estadísticas" });
     }
 };
 
@@ -533,55 +450,48 @@ export const getOrderStats = async (req, res) => {
 // 8. REALIZAR CIERRE DE CAJA
 // ==========================================
 export const realizarCierre = async (req, res) => {
-    const client = await pool.connect();
     try {
         const usuarioId  = req.user?.id;
         const businessId = req.user?.bid;
         const { observaciones } = req.body;
 
-        await client.query('BEGIN');
+        const result = await prisma.$transaction(async (tx) => {
+            const [statsRows] = await tx.$queryRaw(Prisma.sql`
+                SELECT COUNT(*)::int AS total_pedidos, COALESCE(SUM(total), 0) AS total_ingresos
+                FROM pedidos WHERE business_id = ${businessId} AND cierre_id IS NULL
+            `);
 
-        const statsRes = await client.query(
-            `SELECT COUNT(*) as total_pedidos, COALESCE(SUM(total), 0) as total_ingresos
-             FROM "public"."pedidos"
-             WHERE business_id = $1 AND cierre_id IS NULL`,
-            [businessId]
-        );
-        const { total_pedidos, total_ingresos } = statsRes.rows[0];
+            if (statsRows.total_pedidos === 0) {
+                throw Object.assign(new Error("No hay pedidos pendientes por cerrar."), { status: 400 });
+            }
 
-        if (parseInt(total_pedidos) === 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ message: "No hay pedidos pendientes por cerrar." });
-        }
+            const cierre = await tx.cierres.create({
+                data: {
+                    user_id:        usuarioId,
+                    business_id:    businessId,
+                    total_ingresos: statsRows.total_ingresos,
+                    total_pedidos:  statsRows.total_pedidos,
+                    observaciones:  observaciones || 'Cierre manual de ventas',
+                },
+            });
 
-        const cierreRes = await client.query(
-            `INSERT INTO "public"."cierres"
-             ("user_id", "business_id", "total_ingresos", "total_pedidos", "observaciones", "fecha_cierre")
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             RETURNING id`,
-            [usuarioId, businessId, total_ingresos, total_pedidos, observaciones || 'Cierre manual de ventas']
-        );
-        const nuevoCierreId = cierreRes.rows[0].id;
+            await tx.pedidos.updateMany({
+                where: { business_id: businessId, cierre_id: null },
+                data:  { cierre_id: cierre.id },
+            });
 
-        await client.query(
-            `UPDATE "public"."pedidos" SET cierre_id = $1 WHERE business_id = $2 AND cierre_id IS NULL`,
-            [nuevoCierreId, businessId]
-        );
-
-        await client.query('COMMIT');
+            return { cierre_id: cierre.id, total_cerrado: statsRows.total_ingresos, pedidos_archivados: statsRows.total_pedidos };
+        });
 
         return res.status(200).json({
             success: true,
             message: "Cierre realizado con éxito. El dashboard se ha reiniciado.",
-            data: { cierre_id: nuevoCierreId, total_cerrado: total_ingresos, pedidos_archivados: total_pedidos }
+            data: result,
         });
-
     } catch (error) {
-        await client.query('ROLLBACK');
         console.error("Error en cierre:", error);
-        return res.status(500).json({ message: "Error al realizar el cierre" });
-    } finally {
-        client.release();
+        const status = error.status || 500;
+        return res.status(status).json({ message: error.message || "Error al realizar el cierre" });
     }
 };
 
@@ -591,15 +501,12 @@ export const realizarCierre = async (req, res) => {
 export const getCierres = async (req, res) => {
     try {
         const businessId = req.user?.bid;
-
-        const result = await pool.query(
-            `SELECT * FROM "public"."cierres"
-             WHERE business_id = $1
-             ORDER BY fecha_cierre DESC LIMIT 20`,
-            [businessId]
-        );
-
-        return res.status(200).json({ data: result.rows });
+        const cierres = await prisma.cierres.findMany({
+            where:   { business_id: businessId },
+            orderBy: { fecha_cierre: 'desc' },
+            take: 20,
+        });
+        return res.status(200).json({ data: cierres });
     } catch (error) {
         console.error("Error obteniendo cierres:", error);
         return res.status(500).json({ message: "Error al obtener historial" });

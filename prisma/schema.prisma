@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model cierres {
+  id             Int       @id @default(autoincrement())
+  user_id        Int
+  fecha_cierre   DateTime? @default(now()) @db.Timestamp(6)
+  total_ingresos Decimal?  @default(0) @db.Decimal(12, 2)
+  total_pedidos  Int?      @default(0)
+  observaciones  String?
+  business_id    Int?
+  pedidos        pedidos[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model detalle_pedidos {
+  id              Int        @id @default(autoincrement())
+  pedido_id       Int
+  inventario_id   Int
+  cantidad        Int
+  precio_unitario Decimal    @db.Decimal(12, 2)
+  subtotal        Decimal?   @default(dbgenerated("((cantidad)::numeric * precio_unitario)")) @db.Decimal(12, 2)
+  inventario      inventario @relation(fields: [inventario_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_detalle_inventario")
+  pedidos         pedidos    @relation(fields: [pedido_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_detalle_pedido")
+
+  @@index([pedido_id], map: "idx_detalle_pedido")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model documentos_venta {
+  id                     Int                @id @default(autoincrement())
+  tipo                   String             @db.VarChar(20)
+  numero                 String?            @db.VarChar(50)
+  business_id            Int
+  usuario_id             Int?
+  persona_id             Int?
+  cliente_nombre         String?            @db.VarChar(200)
+  cliente_identificacion String?            @db.VarChar(100)
+  cliente_email          String?            @db.VarChar(200)
+  cliente_telefono       String?            @db.VarChar(50)
+  cliente_direccion      String?
+  items                  Json               @default("[]")
+  subtotal               Decimal?           @default(0) @db.Decimal(12, 2)
+  descuento_global       Decimal?           @default(0) @db.Decimal(12, 2)
+  impuesto_total         Decimal?           @default(0) @db.Decimal(12, 2)
+  total                  Decimal?           @default(0) @db.Decimal(12, 2)
+  notas                  String?
+  condiciones            String?
+  estado                 String?            @default("BORRADOR") @db.VarChar(30)
+  fecha_emision          DateTime?          @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_vencimiento      DateTime?          @db.Date
+  fecha_pago             DateTime?          @db.Date
+  origen_cotizacion_id   Int?
+  created_at             DateTime?          @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime?          @default(now()) @db.Timestamptz(6)
+  documentos_venta       documentos_venta?  @relation("documentos_ventaTodocumentos_venta", fields: [origen_cotizacion_id], references: [id], onUpdate: NoAction)
+  other_documentos_venta documentos_venta[] @relation("documentos_ventaTodocumentos_venta")
+
+  @@index([business_id], map: "idx_dv_business_id")
+  @@index([estado], map: "idx_dv_estado")
+  @@index([fecha_emision(sort: Desc)], map: "idx_dv_fecha")
+  @@index([tipo], map: "idx_dv_tipo")
+}
+
+model egresos {
+  id          BigInt    @id @default(autoincrement())
+  legacyId    String?   @map("_id")
+  fecha       DateTime? @db.Timestamptz(6)
+  valor       Decimal?  @db.Decimal(12, 2)
+  cuenta      String?
+  descripcion String?
+  createdAt   DateTime? @db.Timestamptz(6)
+  updatedAt   DateTime? @db.Timestamptz(6)
+  v           Int?      @map("__v")
+  usuario     Int?
+  business_id Int?
+
+  @@index([legacyId], map: "idx_egresos_id_text")
+}
+
+model ingreso_items {
+  id              Int         @id @default(autoincrement())
+  ingreso_id      String
+  inventario_id   Int?
+  cantidad        Decimal     @default(1) @db.Decimal
+  precio_unitario Decimal?    @db.Decimal
+  created_at      DateTime?   @default(now()) @db.Timestamp(6)
+  descripcion     String?
+  inventario      inventario? @relation(fields: [inventario_id], references: [id], onUpdate: NoAction)
+
+  @@index([ingreso_id], map: "idx_ingreso_items_ingreso")
+  @@index([inventario_id], map: "idx_ingreso_items_inventario")
+}
+
+model ingresos {
+  id                BigInt    @id @default(autoincrement())
+  legacyId          String?   @map("_id")
+  nombre            String?
+  apellido          String?
+  numeroDeDocumento String?
+  fechaVencimiento  DateTime? @db.Timestamptz(6)
+  createdAt         DateTime? @db.Timestamptz(6)
+  updatedAt         DateTime? @db.Timestamptz(6)
+  v                 String?   @map("__v")
+  producto          String?
+  valor             Decimal?  @db.Decimal(12, 2)
+  cuenta            String?
+  customer_email    String?
+  payment_status    String?
+  payment_reference String?
+  usuario           Int?
+  comprobante_url   String?
+  tipoDocumento     String?   @default("C.C") @db.VarChar(10)
+  business_id       Int?
+  persona_id        Int?
+  pedido_id         Int?
+  descripcion       String?
+  pedidos           pedidos?  @relation(fields: [pedido_id], references: [id], onUpdate: NoAction)
+  personas          personas? @relation(fields: [persona_id], references: [id], onUpdate: NoAction)
+
+  @@index([legacyId], map: "idx_ingresos_id_text")
+  @@index([numeroDeDocumento, payment_status], map: "idx_cedula_status")
+  @@index([pedido_id], map: "idx_ingresos_pedido_id")
+  @@index([persona_id], map: "idx_ingresos_persona_id")
+}
+
+model inventario {
+  id                     Int               @id @default(autoincrement())
+  nombre                 String            @db.VarChar(255)
+  descripcion            String?
+  monto                  Decimal?          @default(0) @db.Decimal
+  user_id                Int?
+  cantidad               Int?              @default(0)
+  tipo_programa          String?           @db.VarChar(50)
+  created_at             DateTime?         @default(now()) @db.Timestamp(6)
+  updated_at             DateTime?         @default(now()) @db.Timestamp(6)
+  imagen_url             String?
+  costo_compra           Decimal?          @default(0) @db.Decimal
+  unidades_por_caja      Int?              @default(1)
+  codigo_barras          String?           @db.VarChar(50)
+  business_id            Int?
+  tipo_item              String?           @default("producto") @db.VarChar(20)
+  sku                    String?           @db.VarChar(100)
+  precio_compra_unitario Decimal?          @default(0) @db.Decimal(12, 2)
+  stock_minimo           Int?              @default(0)
+  categoria              String?           @db.VarChar(100)
+  impuesto               Decimal?          @default(0) @db.Decimal(5, 2)
+  detalle_pedidos        detalle_pedidos[]
+  ingreso_items          ingreso_items[]
+
+  @@unique([nombre, user_id], map: "unique_nombre_user_id")
+  @@index([codigo_barras], map: "idx_codigo_barras")
+}
+
+model pedidos {
+  id              Int                 @id @default(autoincrement())
+  persona_id      Int
+  user_id         Int
+  total           Decimal             @default(0) @db.Decimal(12, 2)
+  estado          estado_pedido_enum? @default(PENDIENTE)
+  observaciones   String?
+  created_at      DateTime?           @default(now()) @db.Timestamp(6)
+  updated_at      DateTime?           @default(now()) @db.Timestamp(6)
+  cierre_id       Int?
+  business_id     Int?
+  detalle_pedidos detalle_pedidos[]
+  ingresos        ingresos[]         @ignore
+  cierres         cierres?            @relation(fields: [cierre_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_cierre")
+  personas        personas            @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_persona")
+
+  @@index([estado], map: "idx_pedidos_estado")
+  @@index([created_at], map: "idx_pedidos_fecha")
+  @@index([persona_id], map: "idx_pedidos_persona")
+}
+
+model personas {
+  id               Int                @id @default(autoincrement())
+  tipo_documento   String             @db.VarChar(10)
+  numero_documento String?            @db.VarChar(20)
+  nombre           String             @db.VarChar(100)
+  apellido         String?            @db.VarChar(100)
+  direccion        String?            @db.VarChar(255)
+  celular          String             @db.VarChar(20)
+  email            String?            @db.VarChar(150)
+  tipo             tipo_persona_enum? @default(CLIENTE)
+  created_at       DateTime?          @default(now()) @db.Timestamp(6)
+  updated_at       DateTime?          @default(now()) @db.Timestamp(6)
+  usuario          Int?
+  business_id      Int?
+  ingresos         ingresos[]
+  pedidos          pedidos[]
+
+  @@unique([tipo_documento, numero_documento, business_id], map: "uq_personas_identificacion")
+  @@index([celular], map: "idx_personas_celular")
+  @@index([numero_documento], map: "idx_personas_documento")
+  @@index([nombre], map: "idx_personas_nombre")
+}
+
+enum estado_pedido_enum {
+  PENDIENTE
+  ENTREGADO
+  ANULADO
+}
+
+enum person_type_enum {
+  CLIENT
+  SUPPLIER
+  EMPLOYEE
+  MIXED
+}
+
+enum tipo_persona_enum {
+  CLIENTE
+  PROVEEDOR
+  EMPLEADO
+}
