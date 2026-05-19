@@ -56,6 +56,8 @@ model documentos_venta {
   fecha_emision          DateTime?          @default(dbgenerated("CURRENT_DATE")) @db.Date
   fecha_vencimiento      DateTime?          @db.Date
   fecha_pago             DateTime?          @db.Date
+  total_abonado          Decimal?           @default(0) @db.Decimal(12, 2)
+  abonos                 Json               @default("[]")
   origen_cotizacion_id   Int?
   created_at             DateTime?          @default(now()) @db.Timestamptz(6)
   updated_at             DateTime?          @default(now()) @db.Timestamptz(6)

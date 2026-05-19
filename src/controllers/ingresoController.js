@@ -107,15 +107,24 @@ export const createIngreso = async (req, res) => {
                         prodNombre = inv?.nombre || prodNombre || 'Producto';
                     }
                     nombresProducto.push(prodNombre);
+                    const cantItem = Number(item.cantidad) || 1;
                     await tx.ingreso_items.create({
                         data: {
                             ingreso_id:      legacyId,
                             inventario_id:   item.inventario_id || null,
                             descripcion:     prodNombre,
-                            cantidad:        Number(item.cantidad) || 1,
+                            cantidad:        cantItem,
                             precio_unitario: Number(item.precio_unitario) || 0,
                         },
                     });
+
+                    // Descontar del inventario
+                    if (item.inventario_id) {
+                        await tx.inventario.updateMany({
+                            where: { id: item.inventario_id, business_id: businessId },
+                            data:  { cantidad: { decrement: cantItem } },
+                        });
+                    }
                 }
                 const productoFinal = nombresProducto.filter(Boolean).join(', ') || descripcionFinal;
                 await tx.ingresos.update({

@@ -159,11 +159,14 @@ export const updateDocumentoVenta = async (req, res) => {
             'notas', 'condiciones', 'estado',
             'fecha_emision', 'fecha_vencimiento', 'fecha_pago',
         ];
+        const dateFields = new Set(['fecha_emision', 'fecha_vencimiento', 'fecha_pago']);
 
         const updateData = {};
         for (const key of allowed) {
             if (bodyRest[key] !== undefined) {
-                updateData[key] = bodyRest[key];
+                updateData[key] = dateFields.has(key) && bodyRest[key]
+                    ? new Date(bodyRest[key])
+                    : bodyRest[key];
             }
         }
 
@@ -198,7 +201,7 @@ export const updateDocumentoVenta = async (req, res) => {
                 const clienteNombre = prevDoc.cliente_nombre || 'Cliente';
                 const descripcion   = `Factura ${prevDoc.numero} - ${clienteNombre}`;
                 const cuentaFinal   = cuenta || 'Otra';
-                const totalVal      = String(prevDoc.total || 0);
+                const totalVal      = Number(prevDoc.total || 0);
 
                 await tx.$executeRaw(Prisma.sql`
                     INSERT INTO "public"."ingresos" (
@@ -210,14 +213,14 @@ export const updateDocumentoVenta = async (req, res) => {
                         ${clienteNombre}, ${''},
                         ${prevDoc.cliente_identificacion || '0'},
                         ${'NIT'},
-                        ${vencimiento.toISOString()},
+                        ${vencimiento},
                         ${descripcion}, ${descripcion},
                         ${totalVal}, ${cuentaFinal},
                         ${prevDoc.cliente_email || ''},
                         ${'APPROVED'},
                         ${'FAC-' + prevDoc.numero + '-' + Date.now()},
                         ${usuarioId}, ${businessId},
-                        ${now.toISOString()}, ${now.toISOString()}, ${'0'},
+                        ${now}, ${now}, ${'0'},
                         ${prevDoc.persona_id || null}
                     )
                 `);
@@ -327,7 +330,104 @@ export const convertirCotizacionAFactura = async (req, res) => {
     }
 };
 
-// ─── 7. ESTADÍSTICAS ──────────────────────────────────────────────────────────
+// ─── 7. REGISTRAR ABONO ───────────────────────────────────────────────────────
+export const registrarAbono = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        const usuarioId  = req.user?.id;
+        const { id }     = req.params;
+        const { monto, cuenta = 'Efectivo', nota } = req.body;
+
+        const montoNum = Number(monto);
+        if (!montoNum || montoNum <= 0) {
+            return res.status(400).json({ message: 'El monto del abono debe ser mayor a 0' });
+        }
+
+        const doc = await prisma.$transaction(async (tx) => {
+            const prevDoc = await tx.documentos_venta.findFirst({
+                where: { id: Number(id), business_id: businessId },
+            });
+            if (!prevDoc) throw Object.assign(new Error('Documento no encontrado'), { status: 404 });
+            if (prevDoc.tipo !== 'FACTURA') throw Object.assign(new Error('Solo se pueden abonar facturas'), { status: 400 });
+            if (prevDoc.estado === 'ANULADA') throw Object.assign(new Error('La factura está anulada'), { status: 400 });
+            if (prevDoc.estado === 'PAGADA')  throw Object.assign(new Error('La factura ya está pagada'), { status: 400 });
+
+            const abonosAnt = Array.isArray(prevDoc.abonos)
+                ? prevDoc.abonos
+                : (typeof prevDoc.abonos === 'string' ? JSON.parse(prevDoc.abonos || '[]') : []);
+
+            const nuevoAbono = { id: uuidv4(), fecha: new Date().toISOString(), monto: montoNum, cuenta, nota: nota || null };
+            const abonosNuevos  = [...abonosAnt, nuevoAbono];
+            const totalAbonado  = abonosNuevos.reduce((s, a) => s + Number(a.monto), 0);
+            const totalFactura  = Number(prevDoc.total);
+            const pagadoFull    = totalAbonado >= totalFactura;
+
+            // Usar $executeRaw para no depender del cliente Prisma generado
+            if (pagadoFull) {
+                await tx.$executeRaw(Prisma.sql`
+                    UPDATE documentos_venta SET
+                        abonos        = ${JSON.stringify(abonosNuevos)}::jsonb,
+                        total_abonado = ${totalAbonado},
+                        estado        = 'PAGADA',
+                        fecha_pago    = NOW(),
+                        updated_at    = NOW()
+                    WHERE id = ${Number(id)}
+                `);
+            } else {
+                await tx.$executeRaw(Prisma.sql`
+                    UPDATE documentos_venta SET
+                        abonos        = ${JSON.stringify(abonosNuevos)}::jsonb,
+                        total_abonado = ${totalAbonado},
+                        estado        = 'ABONO',
+                        updated_at    = NOW()
+                    WHERE id = ${Number(id)}
+                `);
+            }
+            const [updated] = await tx.$queryRaw(Prisma.sql`
+                SELECT * FROM documentos_venta WHERE id = ${Number(id)}
+            `);
+
+            // Ingreso por el abono
+            const ingresoId    = uuidv4();
+            const now          = new Date();
+            const vencimiento  = new Date(now);
+            vencimiento.setFullYear(vencimiento.getFullYear() + 1);
+            const clienteNombre = prevDoc.cliente_nombre || 'Cliente';
+            const descripcion   = `Abono Factura ${prevDoc.numero} - ${clienteNombre}`;
+
+            await tx.$executeRaw(Prisma.sql`
+                INSERT INTO "public"."ingresos" (
+                    "_id","nombre","apellido","numeroDeDocumento","tipoDocumento","fechaVencimiento",
+                    "producto","descripcion","valor","cuenta","customer_email","payment_status",
+                    "payment_reference","usuario","business_id","createdAt","updatedAt","__v","persona_id"
+                ) VALUES (
+                    ${ingresoId},
+                    ${clienteNombre}, ${''},
+                    ${prevDoc.cliente_identificacion || '0'}, ${'NIT'},
+                    ${vencimiento},
+                    ${descripcion}, ${descripcion},
+                    ${montoNum}, ${cuenta},
+                    ${prevDoc.cliente_email || ''},
+                    ${'APPROVED'},
+                    ${'ABONO-' + prevDoc.numero + '-' + Date.now()},
+                    ${usuarioId}, ${businessId},
+                    ${now}, ${now}, ${'0'},
+                    ${prevDoc.persona_id || null}
+                )
+            `);
+
+            return updated;
+        });
+
+        return res.status(200).json(doc);
+    } catch (err) {
+        console.error('registrarAbono:', err);
+        const status = err.status || 500;
+        return res.status(status).json({ message: err.message || 'Error al registrar abono' });
+    }
+};
+
+// ─── 8. ESTADÍSTICAS ──────────────────────────────────────────────────────────
 export const getEstadisticasDocumentos = async (req, res) => {
     try {
         const businessId = req.user?.bid;

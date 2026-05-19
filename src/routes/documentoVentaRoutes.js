@@ -7,6 +7,7 @@ import {
   updateDocumentoVenta,
   deleteDocumentoVenta,
   convertirCotizacionAFactura,
+  registrarAbono,
   getEstadisticasDocumentos,
 } from '../controllers/documentoVentaController.js';
 
@@ -21,5 +22,6 @@ router.post('/',              createDocumentoVenta);
 router.put('/:id',            updateDocumentoVenta);
 router.delete('/:id',         deleteDocumentoVenta);
 router.post('/:id/convertir', convertirCotizacionAFactura);
+router.post('/:id/abonar',   registrarAbono);
 
 export default router;
