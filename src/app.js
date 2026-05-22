@@ -16,10 +16,10 @@ import documentoVentaRoutes from './routes/documentoVentaRoutes.js';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080; // Google Cloud inyecta el puerto automáticamente aquí
+
 const app = express();
 
-// Middlewares de seguridad y utilidades
 app.use(helmet());
 app.use(cors({
   credentials: true,
