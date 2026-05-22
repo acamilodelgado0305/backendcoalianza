@@ -554,7 +554,101 @@ export const updateIngreso = async (req, res) => {
 };
 
 // ==========================================
-// 8. ELIMINAR INGRESO
+// 8. GRÁFICA: INGRESOS DIARIOS DEL MES
+// ==========================================
+export const getIngresosDiarios = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No autorizado" });
+
+        const now   = new Date();
+        const year  = parseInt(req.query.year)  || now.getFullYear();
+        const month = parseInt(req.query.month) || (now.getMonth() + 1);
+        // hoy y utcOffset vienen del frontend en zona horaria local del usuario
+        const todayDay   = parseInt(req.query.hoy)       || now.getDate();
+        const utcOffset  = parseFloat(req.query.utcOffset) || 0; // ej: -5 para Colombia
+
+        const monthStart  = new Date(year, month - 1, 1, 0, 0, 0, 0);
+        const monthEnd    = new Date(year, month,     0, 23, 59, 59, 999);
+        const daysInMonth = monthEnd.getDate();
+        const lastDay     = (year === now.getFullYear() && month === (now.getMonth() + 1))
+            ? todayDay
+            : daysInMonth;
+
+        const rows = await prisma.$queryRaw(Prisma.sql`
+            SELECT
+                EXTRACT(DAY FROM ("createdAt" + (${utcOffset} * INTERVAL '1 hour')))::int  AS dia,
+                COALESCE(SUM(CAST(valor AS NUMERIC)), 0)::float AS ingreso
+            FROM "public"."ingresos"
+            WHERE  business_id  = ${businessId}
+               AND "createdAt" >= ${monthStart}
+               AND "createdAt" <= ${monthEnd}
+            GROUP BY 1
+            ORDER BY 1
+        `);
+
+        const byDay = {};
+        rows.forEach(r => { byDay[Number(r.dia)] = Number(r.ingreso); });
+
+        const data = [];
+        for (let d = 1; d <= lastDay; d++) {
+            data.push({ dia: d, ingreso: byDay[d] || 0 });
+        }
+
+        return res.status(200).json({ data });
+    } catch (error) {
+        console.error("Error al obtener ingresos diarios:", error);
+        return res.status(500).json({ message: "Error al obtener ingresos diarios", error: error.message });
+    }
+};
+
+// ==========================================
+// 9. GRÁFICA: INGRESOS MENSUALES DEL AÑO
+// ==========================================
+export const getIngresosMensuales = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No autorizado" });
+
+        const now       = new Date();
+        const year      = parseInt(req.query.year) || now.getFullYear();
+        const mesActual = parseInt(req.query.mes_actual) || now.getMonth() + 1;
+        const utcOffset = parseFloat(req.query.utcOffset) || 0;
+
+        const yearStart = new Date(year, 0,  1, 0,  0,  0,   0);
+        const yearEnd   = new Date(year, 11, 31, 23, 59, 59, 999);
+        const lastMonth = (year === now.getFullYear()) ? mesActual : 12;
+
+        const rows = await prisma.$queryRaw(Prisma.sql`
+            SELECT
+                EXTRACT(MONTH FROM ("createdAt" + (${utcOffset} * INTERVAL '1 hour')))::int  AS mes,
+                COALESCE(SUM(CAST(valor AS NUMERIC)), 0)::float AS ingreso
+            FROM "public"."ingresos"
+            WHERE  business_id  = ${businessId}
+               AND "createdAt" >= ${yearStart}
+               AND "createdAt" <= ${yearEnd}
+            GROUP BY 1
+            ORDER BY 1
+        `);
+
+        const byMonth = {};
+        rows.forEach(r => { byMonth[Number(r.mes)] = Number(r.ingreso); });
+
+        const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        const data = [];
+        for (let m = 1; m <= lastMonth; m++) {
+            data.push({ mes: MESES[m - 1], ingreso: byMonth[m] || 0 });
+        }
+
+        return res.status(200).json({ data });
+    } catch (error) {
+        console.error("Error al obtener ingresos mensuales:", error);
+        return res.status(500).json({ message: "Error al obtener ingresos mensuales", error: error.message });
+    }
+};
+
+// ==========================================
+// 10. ELIMINAR INGRESO
 // ==========================================
 export const deleteIngreso = async (req, res) => {
     try {

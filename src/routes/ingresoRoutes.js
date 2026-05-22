@@ -8,6 +8,8 @@ import {
   getIngresosByUsuario,
   getIngresoById,
   getIngresoStats,
+  getIngresosDiarios,
+  getIngresosMensuales,
   verificarIngreso,
   updateIngreso,
   deleteIngreso
@@ -40,6 +42,14 @@ router.get('/', getIngresosByUsuario);
 // Estadísticas / resumen
 // GET /api/ingresos/stats?fecha_inicio=&fecha_fin=
 router.get('/stats', getIngresoStats);
+
+// Gráfica de ingresos diarios del mes
+// GET /api/ingresos/chart/diario?year=2026&month=5
+router.get('/chart/diario', getIngresosDiarios);
+
+// Gráfica de ingresos mensuales del año
+// GET /api/ingresos/chart/mensual?year=2026
+router.get('/chart/mensual', getIngresosMensuales);
 
 // Obtener uno por ID
 // GET /api/ingresos/:id
