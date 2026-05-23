@@ -12,13 +12,12 @@ const esProductoServicio = (p) =>
 // ==========================================
 export const createPedido = async (req, res) => {
     try {
-        const { persona_id, items, observaciones } = req.body;
+        const { persona_id, cliente_nombre, items, observaciones } = req.body;
         const usuarioId  = req.user?.id;
         const businessId = req.user?.bid;
 
         if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
-        if (!persona_id) return res.status(400).json({ message: "Se requiere un cliente (persona_id)" });
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ message: "El pedido debe contener al menos un producto" });
         }
@@ -45,7 +44,8 @@ export const createPedido = async (req, res) => {
 
             const pedido = await tx.pedidos.create({
                 data: {
-                    persona_id,
+                    persona_id:    persona_id || null,
+                    cliente_nombre: !persona_id && cliente_nombre ? cliente_nombre.trim() : null,
                     user_id:      usuarioId,
                     business_id:  businessId,
                     total:        totalPedido,
@@ -103,7 +103,8 @@ export const getPedidos = async (req, res) => {
         const rows = await prisma.$queryRaw(Prisma.sql`
             SELECT
                 p.id, p.total, p.estado, p.created_at, p.observaciones, p.cierre_id,
-                pe.nombre  AS cliente_nombre,
+                p.persona_id,
+                COALESCE(pe.nombre, p.cliente_nombre, 'Cliente General') AS cliente_nombre,
                 pe.apellido AS cliente_apellido,
                 COALESCE(
                     json_agg(
@@ -115,11 +116,11 @@ export const getPedidos = async (req, res) => {
                     ) FILTER (WHERE i.id IS NOT NULL), '[]'
                 ) AS items_detalle
             FROM pedidos p
-            JOIN personas pe ON p.persona_id = pe.id
+            LEFT JOIN personas pe ON p.persona_id = pe.id
             LEFT JOIN detalle_pedidos dp ON p.id = dp.pedido_id
             LEFT JOIN inventario i       ON dp.inventario_id = i.id
             WHERE ${whereClause}
-            GROUP BY p.id, pe.id
+            GROUP BY p.id, pe.id, pe.nombre, pe.apellido
             ORDER BY p.created_at DESC
         `);
 
@@ -254,17 +255,17 @@ export const updateEstadoPedido = async (req, res) => {
                         ${pedido.personas?.nombre  || 'Cliente Ocasional'},
                         ${pedido.personas?.apellido || ''},
                         ${pedido.personas?.numero_documento || '0'},
-                        ${fechaVenc.toISOString()},
+                        ${fechaVenc},
                         ${'Venta POS - Pedido #' + id},
-                        ${String(pedido.total)},
+                        ${Number(pedido.total)},
                         ${cuentaFinal},
                         ${pedido.personas?.email || ''},
                         ${'APPROVED'},
                         ${'PEDIDO-' + id + '-' + Date.now()},
                         ${usuarioId},
                         ${businessId},
-                        ${createdAt.toISOString()},
-                        ${createdAt.toISOString()},
+                        ${createdAt},
+                        ${createdAt},
                         ${'0'},
                         ${''},
                         ${pedido.persona_id},
@@ -338,7 +339,7 @@ export const deletePedido = async (req, res) => {
 export const updatePedido = async (req, res) => {
     try {
         const { id } = req.params;
-        const { persona_id, items, observaciones } = req.body;
+        const { persona_id, cliente_nombre, items, observaciones } = req.body;
         const businessId = req.user?.bid;
 
         await prisma.$transaction(async (tx) => {
@@ -388,7 +389,13 @@ export const updatePedido = async (req, res) => {
 
             await tx.pedidos.update({
                 where: { id: Number(id) },
-                data:  { persona_id, total: nuevoTotal, observaciones, updated_at: new Date() },
+                data:  {
+                    persona_id:    persona_id || null,
+                    cliente_nombre: !persona_id && cliente_nombre ? cliente_nombre.trim() : null,
+                    total:         nuevoTotal,
+                    observaciones,
+                    updated_at:    new Date(),
+                },
             });
         });
 

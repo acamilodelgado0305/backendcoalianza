@@ -162,7 +162,8 @@ model inventario {
 
 model pedidos {
   id              Int                 @id @default(autoincrement())
-  persona_id      Int
+  persona_id      Int?
+  cliente_nombre  String?             @db.VarChar(200)
   user_id         Int
   total           Decimal             @default(0) @db.Decimal(12, 2)
   estado          estado_pedido_enum? @default(PENDIENTE)
@@ -174,7 +175,7 @@ model pedidos {
   detalle_pedidos detalle_pedidos[]
   ingresos        ingresos[]         @ignore
   cierres         cierres?            @relation(fields: [cierre_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_cierre")
-  personas        personas            @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_persona")
+  personas        personas?           @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_persona")
 
   @@index([estado], map: "idx_pedidos_estado")
   @@index([created_at], map: "idx_pedidos_fecha")
