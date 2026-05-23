@@ -1,6 +1,10 @@
 import prisma from '../prisma.js';
 import { v4 as uuidv4 } from 'uuid';
 
+// Prisma devuelve el campo `_id` de la DB como `legacyId` (por el @map).
+// El frontend espera `_id`, así que normalizamos antes de responder.
+const normalizeEgreso = (e) => ({ ...e, _id: e.legacyId });
+
 // ==========================================
 // 1. CREAR EGRESO (CREATE)
 // ==========================================
@@ -31,7 +35,7 @@ export const createEgreso = async (req, res) => {
             },
         });
 
-        return res.status(201).json(egreso);
+        return res.status(201).json(normalizeEgreso(egreso));
     } catch (error) {
         console.error("Error al crear el egreso:", error);
         return res.status(500).json({ message: "Error al crear el egreso", error: error.message });
@@ -61,7 +65,7 @@ export const getEgresosByUsuario = async (req, res) => {
             orderBy: [{ fecha: 'desc' }, { createdAt: 'desc' }],
         });
 
-        return res.status(200).json(egresos);
+        return res.status(200).json(egresos.map(normalizeEgreso));
     } catch (error) {
         console.error("Error al obtener los egresos:", error);
         return res.status(500).json({ message: "Error al obtener los egresos", error: error.message });
@@ -89,7 +93,7 @@ export const getEgresoById = async (req, res) => {
         });
 
         if (!egreso) return res.status(404).json({ message: "Egreso no encontrado" });
-        return res.status(200).json(egreso);
+        return res.status(200).json(normalizeEgreso(egreso));
     } catch (error) {
         console.error("Error obteniendo egreso:", error);
         return res.status(500).json({ message: "Error del servidor" });
@@ -128,7 +132,7 @@ export const updateEgreso = async (req, res) => {
             },
         });
 
-        return res.status(200).json({ message: "Egreso actualizado", data: egreso });
+        return res.status(200).json({ message: "Egreso actualizado", data: normalizeEgreso(egreso) });
     } catch (error) {
         console.error("Error actualizando egreso:", error);
         return res.status(500).json({ message: "Error al actualizar", error: error.message });
