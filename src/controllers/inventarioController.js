@@ -13,7 +13,7 @@ export const createInventarioItem = async (req, res) => {
             costo_compra, precio_compra_unitario,
             unidades_por_caja, stock_inicial_empaques,
             codigo_barras, tipo_programa, tipo_item,
-            sku, stock_minimo, categoria,
+            sku, stock_minimo, categoria, send_mail,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -71,6 +71,7 @@ export const createInventarioItem = async (req, res) => {
                 stock_minimo:           parseInt(stock_minimo) || 0,
                 categoria:              categoria || null,
                 impuesto:               parseFloat(req.body.impuesto) || 0,
+                send_mail:              send_mail === 'true' || send_mail === true,
             },
         });
 
@@ -135,7 +136,7 @@ export const updateInventarioItem = async (req, res) => {
             costo_compra, precio_compra_unitario,
             unidades_por_caja, stock_inicial_empaques,
             codigo_barras, tipo_programa, tipo_item,
-            sku, stock_minimo, categoria,
+            sku, stock_minimo, categoria, send_mail,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -207,6 +208,9 @@ export const updateInventarioItem = async (req, res) => {
                 stock_minimo:           parseInt(stock_minimo) || 0,
                 categoria:              categoria || null,
                 impuesto:               isNaN(impuesto) ? 0 : impuesto,
+                send_mail:              send_mail !== undefined
+                                            ? (send_mail === 'true' || send_mail === true)
+                                            : (productoActual.send_mail ?? false),
                 updated_at:             new Date(),
             },
         });

@@ -57,7 +57,9 @@ export const createIngreso = async (req, res) => {
         if (!totalValor) return res.status(400).json({ message: "El valor total es obligatorio" });
 
         const nombreFinal   = personaData?.nombre           || nombre    || 'Cliente';
-        const apellidoFinal = personaData?.apellido         || apellido  || 'General';
+        const apellidoFinal = personaData != null
+            ? (personaData.apellido ?? '')
+            : (apellido || 'General');
         const docFinal      = personaData?.numero_documento || numeroDeDocumento || '0';
         const tipoDocFinal  = personaData?.tipo_documento   || tipoDocumento || tipo_documento || tipoDeDocumento || 'CC';
         const emailFinal    = personaData?.email            || customer_email || '';
@@ -68,6 +70,30 @@ export const createIngreso = async (req, res) => {
         const fechaVencimiento = new Date(createdAt);
         fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
 
+        // Resolver nombres de producto ANTES de la transacción (lecturas no transaccionales)
+        const inventarioIds = [...new Set(parsedItems.filter(i => i.inventario_id).map(i => i.inventario_id))];
+        let invNombreMap = {};
+        if (inventarioIds.length > 0) {
+            const invs = await prisma.inventario.findMany({
+                where:  { id: { in: inventarioIds }, business_id: businessId },
+                select: { id: true, nombre: true },
+            });
+            invNombreMap = Object.fromEntries(invs.map(i => [i.id, i.nombre]));
+        }
+
+        const itemsResueltos = parsedItems.map(item => ({
+            inventario_id:   item.inventario_id || null,
+            descripcion:     item.inventario_id
+                ? (invNombreMap[item.inventario_id] || item.descripcion || 'Producto')
+                : (item.descripcion || null),
+            cantidad:        Number(item.cantidad) || 1,
+            precio_unitario: Number(item.precio_unitario) || 0,
+        }));
+
+        const productoFinal = itemsResueltos.length > 0
+            ? (itemsResueltos.map(i => i.descripcion).filter(Boolean).join(', ') || descripcionFinal)
+            : descripcionFinal;
+
         const ingreso = await prisma.$transaction(async (tx) => {
             const created = await tx.ingresos.create({
                 data: {
@@ -77,8 +103,8 @@ export const createIngreso = async (req, res) => {
                     numeroDeDocumento: docFinal,
                     tipoDocumento:    tipoDocFinal,
                     fechaVencimiento,
-                    producto:         descripcionFinal,
-                    descripcion:      descripcionFinal,
+                    producto:         productoFinal,
+                    descripcion:      productoFinal,
                     valor:            totalValor,
                     cuenta,
                     customer_email:   emailFinal,
@@ -95,46 +121,29 @@ export const createIngreso = async (req, res) => {
                 },
             });
 
-            if (parsedItems.length > 0) {
-                const nombresProducto = [];
-                for (const item of parsedItems) {
-                    let prodNombre = item.descripcion || null;
-                    if (item.inventario_id) {
-                        const inv = await tx.inventario.findFirst({
-                            where:  { id: item.inventario_id, business_id: businessId },
-                            select: { nombre: true },
-                        });
-                        prodNombre = inv?.nombre || prodNombre || 'Producto';
-                    }
-                    nombresProducto.push(prodNombre);
-                    const cantItem = Number(item.cantidad) || 1;
-                    await tx.ingreso_items.create({
-                        data: {
-                            ingreso_id:      legacyId,
-                            inventario_id:   item.inventario_id || null,
-                            descripcion:     prodNombre,
-                            cantidad:        cantItem,
-                            precio_unitario: Number(item.precio_unitario) || 0,
-                        },
-                    });
+            if (itemsResueltos.length > 0) {
+                await tx.ingreso_items.createMany({
+                    data: itemsResueltos.map(i => ({
+                        ingreso_id:      legacyId,
+                        inventario_id:   i.inventario_id,
+                        descripcion:     i.descripcion,
+                        cantidad:        i.cantidad,
+                        precio_unitario: i.precio_unitario,
+                    })),
+                });
 
-                    // Descontar del inventario
+                for (const item of itemsResueltos) {
                     if (item.inventario_id) {
                         await tx.inventario.updateMany({
                             where: { id: item.inventario_id, business_id: businessId },
-                            data:  { cantidad: { decrement: cantItem } },
+                            data:  { cantidad: { decrement: item.cantidad } },
                         });
                     }
                 }
-                const productoFinal = nombresProducto.filter(Boolean).join(', ') || descripcionFinal;
-                await tx.ingresos.update({
-                    where: { id: created.id },
-                    data:  { producto: productoFinal, descripcion: productoFinal },
-                });
             }
 
             return created;
-        });
+        }, { timeout: 15000, maxWait: 5000 });
 
         return res.status(201).json({
             success: true,
@@ -497,14 +506,40 @@ export const updateIngreso = async (req, res) => {
         if (!totalValor) totalValor = Number(ingreso.valor) || 0;
 
         const tipoDocFinal = tipoDocumento || tipo_documento || tipoDeDocumento || ingreso.tipoDocumento || 'CC';
-        const productoStr  = descripcion || (Array.isArray(tipo) ? tipo.join(', ') : tipo) || ingreso.producto;
+        let productoStr    = descripcion || (Array.isArray(tipo) ? tipo.join(', ') : tipo) || ingreso.producto;
+
+        // Resolver nombres de producto ANTES de la transacción (lecturas no transaccionales)
+        let itemsResueltos = [];
+        if (parsedItems.length > 0) {
+            const inventarioIds = [...new Set(parsedItems.filter(i => i.inventario_id).map(i => i.inventario_id))];
+            let invNombreMap = {};
+            if (inventarioIds.length > 0) {
+                const invs = await prisma.inventario.findMany({
+                    where:  { id: { in: inventarioIds }, business_id: businessId },
+                    select: { id: true, nombre: true },
+                });
+                invNombreMap = Object.fromEntries(invs.map(i => [i.id, i.nombre]));
+            }
+            itemsResueltos = parsedItems.map(item => ({
+                inventario_id:   item.inventario_id || null,
+                descripcion:     item.inventario_id
+                    ? (invNombreMap[item.inventario_id] || item.descripcion || null)
+                    : (item.descripcion || null),
+                cantidad:        Number(item.cantidad) || 1,
+                precio_unitario: Number(item.precio_unitario) || 0,
+            }));
+            const productoFinal = itemsResueltos.map(i => i.descripcion).filter(Boolean).join(', ');
+            if (productoFinal) productoStr = productoFinal;
+        }
 
         await prisma.$transaction(async (tx) => {
             await tx.ingresos.update({
                 where: { id: ingreso.id },
                 data: {
                     nombre:           personaData?.nombre           || nombre    || ingreso.nombre,
-                    apellido:         personaData?.apellido         || apellido  || ingreso.apellido,
+                    apellido:         personaData != null
+                                        ? (personaData.apellido ?? '')
+                                        : (apellido || ingreso.apellido),
                     numeroDeDocumento: personaData?.numero_documento || numeroDeDocumento || ingreso.numeroDeDocumento,
                     tipoDocumento:    tipoDocFinal,
                     valor:            totalValor,
@@ -517,35 +552,19 @@ export const updateIngreso = async (req, res) => {
                 },
             });
 
-            if (parsedItems.length > 0) {
+            if (itemsResueltos.length > 0) {
                 await tx.ingreso_items.deleteMany({ where: { ingreso_id: ingreso.legacyId } });
-                const nombresProducto = [];
-                for (const item of parsedItems) {
-                    let prodNombre = item.descripcion || null;
-                    if (item.inventario_id) {
-                        const inv = await tx.inventario.findFirst({ where: { id: item.inventario_id }, select: { nombre: true } });
-                        prodNombre = inv?.nombre || prodNombre;
-                    }
-                    nombresProducto.push(prodNombre);
-                    await tx.ingreso_items.create({
-                        data: {
-                            ingreso_id:      ingreso.legacyId,
-                            inventario_id:   item.inventario_id || null,
-                            descripcion:     prodNombre,
-                            cantidad:        Number(item.cantidad) || 1,
-                            precio_unitario: Number(item.precio_unitario) || 0,
-                        },
-                    });
-                }
-                const productoFinal = nombresProducto.filter(Boolean).join(', ');
-                if (productoFinal) {
-                    await tx.ingresos.update({
-                        where: { id: ingreso.id },
-                        data:  { producto: productoFinal, descripcion: productoFinal },
-                    });
-                }
+                await tx.ingreso_items.createMany({
+                    data: itemsResueltos.map(i => ({
+                        ingreso_id:      ingreso.legacyId,
+                        inventario_id:   i.inventario_id,
+                        descripcion:     i.descripcion,
+                        cantidad:        i.cantidad,
+                        precio_unitario: i.precio_unitario,
+                    })),
+                });
             }
-        });
+        }, { timeout: 15000, maxWait: 5000 });
 
         return res.status(200).json({ message: "Ingreso actualizado", success: true });
     } catch (error) {

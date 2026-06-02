@@ -153,6 +153,7 @@ model inventario {
   stock_minimo           Int?              @default(0)
   categoria              String?           @db.VarChar(100)
   impuesto               Decimal?          @default(0) @db.Decimal(5, 2)
+  send_mail              Boolean?          @default(false)
   detalle_pedidos        detalle_pedidos[]
   ingreso_items          ingreso_items[]
 

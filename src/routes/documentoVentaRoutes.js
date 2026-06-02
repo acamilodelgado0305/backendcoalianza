@@ -9,6 +9,7 @@ import {
   convertirCotizacionAFactura,
   registrarAbono,
   getEstadisticasDocumentos,
+  duplicarDocumento,
 } from '../controllers/documentoVentaController.js';
 
 const router = express.Router();
@@ -22,6 +23,7 @@ router.post('/',              createDocumentoVenta);
 router.put('/:id',            updateDocumentoVenta);
 router.delete('/:id',         deleteDocumentoVenta);
 router.post('/:id/convertir', convertirCotizacionAFactura);
-router.post('/:id/abonar',   registrarAbono);
+router.post('/:id/abonar',    registrarAbono);
+router.post('/:id/duplicar',  duplicarDocumento);
 
 export default router;

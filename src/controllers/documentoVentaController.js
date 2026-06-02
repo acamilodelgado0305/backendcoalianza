@@ -427,6 +427,56 @@ export const registrarAbono = async (req, res) => {
     }
 };
 
+// ─── 9. DUPLICAR DOCUMENTO ────────────────────────────────────────────────────
+export const duplicarDocumento = async (req, res) => {
+    try {
+        const usuarioId  = req.user?.id;
+        const businessId = req.user?.bid;
+        const { id }     = req.params;
+
+        const nuevo = await prisma.$transaction(async (tx) => {
+            const original = await tx.documentos_venta.findFirst({
+                where: { id: Number(id), business_id: businessId },
+            });
+            if (!original) throw Object.assign(new Error('Documento no encontrado'), { status: 404 });
+
+            const numero = await generarNumero(tx, original.tipo, businessId);
+            const estado = original.tipo === 'COTIZACION' ? 'BORRADOR' : 'EMITIDA';
+
+            return tx.documentos_venta.create({
+                data: {
+                    tipo:                   original.tipo,
+                    numero,
+                    business_id:            businessId,
+                    usuario_id:             usuarioId,
+                    persona_id:             original.persona_id,
+                    cliente_nombre:         original.cliente_nombre,
+                    cliente_identificacion: original.cliente_identificacion,
+                    cliente_email:          original.cliente_email,
+                    cliente_telefono:       original.cliente_telefono,
+                    cliente_direccion:      original.cliente_direccion,
+                    items:                  original.items,
+                    subtotal:               original.subtotal,
+                    descuento_global:       original.descuento_global,
+                    impuesto_total:         original.impuesto_total,
+                    total:                  original.total,
+                    notas:                  original.notas,
+                    condiciones:            original.condiciones,
+                    estado,
+                    fecha_emision:          new Date(),
+                    fecha_vencimiento:      original.fecha_vencimiento,
+                },
+            });
+        });
+
+        return res.status(201).json(nuevo);
+    } catch (err) {
+        console.error('duplicarDocumento:', err);
+        const status = err.status || 500;
+        return res.status(status).json({ message: err.message || 'Error al duplicar documento' });
+    }
+};
+
 // ─── 8. ESTADÍSTICAS ──────────────────────────────────────────────────────────
 export const getEstadisticasDocumentos = async (req, res) => {
     try {
