@@ -417,15 +417,15 @@ export const restockInventario = async (req, res) => {
             });
 
             if (registrarEgreso) {
-                const fechaEgreso = fecha ? new Date(fecha).toISOString() : new Date().toISOString();
+                const fechaEgreso = fecha ? new Date(fecha) : new Date();
                 const descEgreso  = descripcion || `Compra de inventario: ${producto.nombre} (${unidades} und)`;
-                const now = new Date().toISOString();
+                const now = new Date();
                 await tx.$executeRaw(Prisma.sql`
                     INSERT INTO "public"."egresos"
                         ("_id","fecha","valor","cuenta","descripcion","usuario","business_id","createdAt","updatedAt","__v")
                     VALUES
-                        (${uuidv4()},${fechaEgreso},${valorTotal},${cuenta},${descEgreso},
-                         ${usuarioId},${businessId},${now},${now},${0})
+                        (${uuidv4()},${fechaEgreso}::timestamptz,${valorTotal},${cuenta},${descEgreso},
+                         ${usuarioId},${businessId},${now}::timestamptz,${now}::timestamptz,${0})
                 `);
             }
 
