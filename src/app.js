@@ -13,6 +13,7 @@ import personRoutes from './routes/personRoutes.js';
 import inventarioRoutes from './routes/inventarioRouter.js';
 import pedidoRoutes from './routes/pedidoRoutes.js';
 import documentoVentaRoutes from './routes/documentoVentaRoutes.js';
+import crmLeadRoutes from './routes/crmLeadRoutes.js';
 
 dotenv.config();
 
@@ -30,7 +31,7 @@ app.use(cors({
     'https://quickcontrola.com',
     'https://santasofia.vercel.app',
     'https://rapictrl.com',
-    'https://www.certitecol.com'
+    'https://www.certitecol.com',
   ]
 }));
 app.use(compression());
@@ -54,6 +55,7 @@ app.use('/api/inventario', inventarioRoutes);
 app.use('/api/pedidos', pedidoRoutes);
 app.use('/api', clientRoutes);
 app.use('/api/documentos-venta', documentoVentaRoutes);
+app.use('/api/crm/leads', crmLeadRoutes);
 
 // Conectar a la base de datos
 

@@ -206,6 +206,26 @@ model personas {
   @@index([nombre], map: "idx_personas_nombre")
 }
 
+model crm_leads {
+  id             Int       @id @default(autoincrement())
+  nombre         String    @db.VarChar(150)
+  empresa        String?   @db.VarChar(150)
+  email          String?   @db.VarChar(150)
+  telefono       String?   @db.VarChar(30)
+  origen         String?   @default("OTRO") @db.VarChar(30)
+  estado         String?   @default("NUEVO") @db.VarChar(30)
+  valor_estimado Decimal?  @default(0) @db.Decimal(12, 2)
+  notas          String?
+  persona_id     Int?
+  usuario        Int?
+  business_id    Int?
+  created_at     DateTime? @default(now()) @db.Timestamp(6)
+  updated_at     DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([business_id], map: "idx_crm_leads_business")
+  @@index([estado], map: "idx_crm_leads_estado")
+}
+
 enum estado_pedido_enum {
   PENDIENTE
   ENTREGADO
@@ -223,4 +243,5 @@ enum tipo_persona_enum {
   CLIENTE
   PROVEEDOR
   EMPLEADO
+  LEAD
 }
