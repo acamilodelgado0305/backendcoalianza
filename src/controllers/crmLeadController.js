@@ -10,7 +10,7 @@ const ORIGENES_VALIDOS = ['WHATSAPP', 'FACEBOOK', 'INSTAGRAM', 'REFERIDO', 'WEB'
 export const createLead = async (req, res) => {
     try {
         const {
-            nombre, empresa, email, telefono,
+            nombre, empresa, tipo_documento, numero_documento, email, telefono,
             origen, estado, valor_estimado, notas, persona_id,
         } = req.body;
 
@@ -24,16 +24,18 @@ export const createLead = async (req, res) => {
         const lead = await prisma.crm_leads.create({
             data: {
                 nombre,
-                empresa:        empresa  || null,
-                email:          email    || null,
-                telefono:       telefono || null,
-                origen:         ORIGENES_VALIDOS.includes(origen) ? origen : 'OTRO',
-                estado:         ESTADOS_VALIDOS.includes(estado) ? estado : 'NUEVO',
-                valor_estimado: valor_estimado != null ? Number(valor_estimado) : 0,
-                notas:          notas || null,
-                persona_id:     persona_id ? Number(persona_id) : null,
-                usuario:        usuarioId,
-                business_id:    businessId,
+                empresa:          empresa  || null,
+                tipo_documento:   tipo_documento   || null,
+                numero_documento: numero_documento || null,
+                email:            email    || null,
+                telefono:         telefono || null,
+                origen:           ORIGENES_VALIDOS.includes(origen) ? origen : 'OTRO',
+                estado:           ESTADOS_VALIDOS.includes(estado) ? estado : 'NUEVO',
+                valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
+                notas:            notas || null,
+                persona_id:       persona_id ? Number(persona_id) : null,
+                usuario:          usuarioId,
+                business_id:      businessId,
             },
         });
 
@@ -51,8 +53,8 @@ export const createLead = async (req, res) => {
 export const createLeadPublico = async (req, res) => {
     try {
         const {
-            business_id, nombre, empresa, email, telefono,
-            origen, valor_estimado, notas,
+            business_id, nombre, empresa, tipo_documento, numero_documento,
+            email, telefono, origen, valor_estimado, notas,
         } = req.body;
 
         const businessId = Number(business_id);
@@ -62,15 +64,17 @@ export const createLeadPublico = async (req, res) => {
         const lead = await prisma.crm_leads.create({
             data: {
                 nombre,
-                empresa:        empresa  || null,
-                email:          email    || null,
-                telefono:       telefono || null,
-                origen:         ORIGENES_VALIDOS.includes(origen) ? origen : 'WEB',
-                estado:         'NUEVO', // todo lead público entra como nuevo
-                valor_estimado: valor_estimado != null ? Number(valor_estimado) : 0,
-                notas:          notas || null,
-                usuario:        null,    // no hay usuario autenticado
-                business_id:    businessId,
+                empresa:          empresa  || null,
+                tipo_documento:   tipo_documento   || null,
+                numero_documento: numero_documento || null,
+                email:            email    || null,
+                telefono:         telefono || null,
+                origen:           ORIGENES_VALIDOS.includes(origen) ? origen : 'WEB',
+                estado:           'NUEVO', // todo lead público entra como nuevo
+                valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
+                notas:            notas || null,
+                usuario:          null,    // no hay usuario autenticado
+                business_id:      businessId,
             },
         });
 
@@ -179,7 +183,7 @@ export const updateLead = async (req, res) => {
         const { id } = req.params;
         const businessId = req.user?.bid;
         const {
-            nombre, empresa, email, telefono,
+            nombre, empresa, tipo_documento, numero_documento, email, telefono,
             origen, estado, valor_estimado, notas, persona_id,
         } = req.body;
 
@@ -199,9 +203,11 @@ export const updateLead = async (req, res) => {
         const lead = await prisma.crm_leads.update({
             where: { id: Number(id) },
             data: {
-                ...(nombre         !== undefined && { nombre }),
-                ...(empresa        !== undefined && { empresa: empresa || null }),
-                ...(email          !== undefined && { email: email || null }),
+                ...(nombre           !== undefined && { nombre }),
+                ...(empresa          !== undefined && { empresa: empresa || null }),
+                ...(tipo_documento   !== undefined && { tipo_documento: tipo_documento || null }),
+                ...(numero_documento !== undefined && { numero_documento: numero_documento || null }),
+                ...(email            !== undefined && { email: email || null }),
                 ...(telefono       !== undefined && { telefono: telefono || null }),
                 ...(origen         !== undefined && { origen }),
                 ...(estado         !== undefined && { estado }),

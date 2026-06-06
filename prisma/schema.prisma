@@ -207,11 +207,13 @@ model personas {
 }
 
 model crm_leads {
-  id             Int       @id @default(autoincrement())
-  nombre         String    @db.VarChar(150)
-  empresa        String?   @db.VarChar(150)
-  email          String?   @db.VarChar(150)
-  telefono       String?   @db.VarChar(30)
+  id               Int       @id @default(autoincrement())
+  nombre           String    @db.VarChar(150)
+  empresa          String?   @db.VarChar(150)
+  tipo_documento   String?   @db.VarChar(10)
+  numero_documento String?   @db.VarChar(30)
+  email            String?   @db.VarChar(150)
+  telefono         String?   @db.VarChar(30)
   origen         String?   @default("OTRO") @db.VarChar(30)
   estado         String?   @default("NUEVO") @db.VarChar(30)
   valor_estimado Decimal?  @default(0) @db.Decimal(12, 2)
