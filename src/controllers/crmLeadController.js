@@ -93,22 +93,38 @@ export const getLeads = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        const { q, estado, origen } = req.query;
+        const { q, estado, origen, fecha_inicio, fecha_fin } = req.query;
+
+        const where = {
+            business_id: businessId,
+            ...(estado && { estado }),
+            ...(origen && { origen }),
+            ...(q && {
+                OR: [
+                    { nombre:   { contains: q, mode: 'insensitive' } },
+                    { empresa:  { contains: q, mode: 'insensitive' } },
+                    { email:    { contains: q, mode: 'insensitive' } },
+                    { telefono: { contains: q, mode: 'insensitive' } },
+                ],
+            }),
+        };
+
+        if (fecha_inicio) {
+            where.created_at = {
+                gte: new Date(fecha_inicio),
+            };
+        }
+        if (fecha_fin) {
+            const fin = new Date(fecha_fin);
+            fin.setHours(23, 59, 59, 999);
+            where.created_at = {
+                ...(where.created_at || {}),
+                lte: fin,
+            };
+        }
 
         const leads = await prisma.crm_leads.findMany({
-            where: {
-                business_id: businessId,
-                ...(estado && { estado }),
-                ...(origen && { origen }),
-                ...(q && {
-                    OR: [
-                        { nombre:   { contains: q, mode: 'insensitive' } },
-                        { empresa:  { contains: q, mode: 'insensitive' } },
-                        { email:    { contains: q, mode: 'insensitive' } },
-                        { telefono: { contains: q, mode: 'insensitive' } },
-                    ],
-                }),
-            },
+            where,
             orderBy: { created_at: 'desc' },
         });
 
@@ -146,9 +162,29 @@ export const getLeadStats = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
+        const { fecha_inicio, fecha_fin } = req.query;
+
+        const where = {
+            business_id: businessId,
+        };
+
+        if (fecha_inicio) {
+            where.created_at = {
+                gte: new Date(fecha_inicio),
+            };
+        }
+        if (fecha_fin) {
+            const fin = new Date(fecha_fin);
+            fin.setHours(23, 59, 59, 999);
+            where.created_at = {
+                ...(where.created_at || {}),
+                lte: fin,
+            };
+        }
+
         const grupos = await prisma.crm_leads.groupBy({
             by: ['estado'],
-            where: { business_id: businessId },
+            where,
             _count: { _all: true },
             _sum: { valor_estimado: true },
         });
