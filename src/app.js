@@ -32,7 +32,8 @@ app.use(cors({
     'https://santasofia.vercel.app',
     'https://rapictrl.com',
     'https://www.certitecol.com',
-    'https://www.validaciondebachillerato.com.co'
+    'https://www.validaciondebachillerato.com.co',
+    'http://127.0.0.1:5501'
   ]
 }));
 app.use(compression());
