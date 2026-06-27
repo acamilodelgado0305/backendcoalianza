@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/authMiddleware.js';
 import {
     createLead,
     createLeadPublico,
+    updateLeadPublico,
     getLeads,
     getLeadById,
     getLeadStats,
@@ -17,6 +18,10 @@ const router = express.Router();
 // POST /api/crm/leads/publico
 // ==========================================
 router.post('/publico', createLeadPublico);
+
+// PUT /api/crm/leads/publico/:id  -> Actualizar lead sin token (business_id en el body)
+// Útil para avanzar el embudo desde una página pública, p. ej. estado -> 'PROPUESTA'
+router.put('/publico/:id', updateLeadPublico);
 
 // ==========================================
 // ZONA PRIVADA (requiere JWT)

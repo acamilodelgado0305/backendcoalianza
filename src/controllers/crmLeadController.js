@@ -86,6 +86,60 @@ export const createLeadPublico = async (req, res) => {
 };
 
 // ==========================================
+// 1.c ACTUALIZAR LEAD DESDE ZONA PÚBLICA (SIN TOKEN)
+// ==========================================
+// El negocio se identifica con business_id en el body (igual que createLeadPublico).
+// Caso típico: avanzar el lead en el embudo (p. ej. estado -> 'PROPUESTA') sin sesión.
+export const updateLeadPublico = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            business_id, nombre, empresa, tipo_documento, numero_documento,
+            email, telefono, origen, estado, valor_estimado, notas,
+        } = req.body;
+
+        const businessId = Number(business_id);
+        if (!businessId) return res.status(400).json({ message: "Falta business_id" });
+
+        // El lead debe existir Y pertenecer a ese negocio (evita editar leads de otro business)
+        const existe = await prisma.crm_leads.findFirst({
+            where: { id: Number(id), business_id: businessId },
+            select: { id: true },
+        });
+        if (!existe) return res.status(404).json({ message: "Lead no encontrado" });
+
+        if (estado !== undefined && !ESTADOS_VALIDOS.includes(estado)) {
+            return res.status(400).json({ message: "Estado inválido" });
+        }
+        if (origen !== undefined && !ORIGENES_VALIDOS.includes(origen)) {
+            return res.status(400).json({ message: "Origen inválido" });
+        }
+
+        const lead = await prisma.crm_leads.update({
+            where: { id: Number(id) },
+            data: {
+                ...(nombre           !== undefined && { nombre }),
+                ...(empresa          !== undefined && { empresa: empresa || null }),
+                ...(tipo_documento   !== undefined && { tipo_documento: tipo_documento || null }),
+                ...(numero_documento !== undefined && { numero_documento: numero_documento || null }),
+                ...(email            !== undefined && { email: email || null }),
+                ...(telefono         !== undefined && { telefono: telefono || null }),
+                ...(origen           !== undefined && { origen }),
+                ...(estado           !== undefined && { estado }),
+                ...(valor_estimado   !== undefined && { valor_estimado: Number(valor_estimado) || 0 }),
+                ...(notas            !== undefined && { notas: notas || null }),
+                updated_at: new Date(),
+            },
+        });
+
+        return res.status(200).json({ success: true, message: "Lead actualizado", data: lead });
+    } catch (error) {
+        console.error("Error actualizando lead público:", error);
+        return res.status(500).json({ message: "Error al actualizar" });
+    }
+};
+
+// ==========================================
 // 2. LISTAR / BUSCAR LEADS (READ)
 // ==========================================
 export const getLeads = async (req, res) => {
