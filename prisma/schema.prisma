@@ -70,6 +70,37 @@ model documentos_venta {
   @@index([tipo], map: "idx_dv_tipo")
 }
 
+model cuentas_por_pagar {
+  id                Int       @id @default(autoincrement())
+  titulo            String    @db.VarChar(200)
+  business_id       Int
+  usuario_id        Int?
+  persona_id        Int?
+  proveedor_nombre  String?   @db.VarChar(200)
+  total             Decimal?  @default(0) @db.Decimal(12, 2)
+  total_abonado     Decimal?  @default(0) @db.Decimal(12, 2)
+  abonos            Json      @default("[]")
+  estado              String?   @default("PENDIENTE") @db.VarChar(30)
+  notas               String?
+  fecha_emision       DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_vencimiento   DateTime? @db.Date
+  fecha_pago          DateTime? @db.Date
+  es_prestamo         Boolean?  @default(false)
+  capital             Decimal?  @db.Decimal(12, 2)
+  tasa_ea             Decimal?  @db.Decimal(7, 4)
+  num_cuotas          Int?
+  periodicidad        String?   @default("MENSUAL") @db.VarChar(20)
+  fecha_primera_cuota DateTime? @db.Date
+  cuotas              Json      @default("[]")
+  created_at          DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@index([business_id], map: "idx_cpp_business_id")
+  @@index([es_prestamo], map: "idx_cpp_es_prestamo")
+  @@index([estado], map: "idx_cpp_estado")
+  @@index([fecha_vencimiento], map: "idx_cpp_vencimiento")
+}
+
 model egresos {
   id          BigInt    @id @default(autoincrement())
   legacyId    String?   @map("_id")
