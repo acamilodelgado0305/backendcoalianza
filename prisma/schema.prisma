@@ -252,6 +252,8 @@ model crm_leads {
   persona_id     Int?
   usuario        Int?
   business_id    Int?
+  fbc            String?   @db.VarChar(255)
+  fbp            String?   @db.VarChar(255)
   created_at     DateTime? @default(now()) @db.Timestamp(6)
   updated_at     DateTime? @default(now()) @db.Timestamp(6)
 

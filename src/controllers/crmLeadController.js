@@ -1,4 +1,5 @@
 import prisma from '../prisma.js';
+import { sendLeadEvent, estadoToEventName, getClientMeta } from '../services/metaConversions.js';
 
 // Estados y orígenes válidos (mismos valores que usa el frontend)
 const ESTADOS_VALIDOS = ['NUEVO', 'CONTACTADO', 'CALIFICADO', 'PROPUESTA', 'GANADO', 'PERDIDO'];
@@ -12,6 +13,7 @@ export const createLead = async (req, res) => {
         const {
             nombre, empresa, tipo_documento, numero_documento, email, telefono,
             origen, estado, valor_estimado, notas, persona_id,
+            fbc, fbp, event_id, lead_id,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -20,6 +22,8 @@ export const createLead = async (req, res) => {
         if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
         if (!nombre)     return res.status(400).json({ message: "El nombre es obligatorio" });
+
+        const estadoFinal = ESTADOS_VALIDOS.includes(estado) ? estado : 'NUEVO';
 
         const lead = await prisma.crm_leads.create({
             data: {
@@ -30,13 +34,24 @@ export const createLead = async (req, res) => {
                 email:            email    || null,
                 telefono:         telefono || null,
                 origen:           ORIGENES_VALIDOS.includes(origen) ? origen : 'OTRO',
-                estado:           ESTADOS_VALIDOS.includes(estado) ? estado : 'NUEVO',
+                estado:           estadoFinal,
                 valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
                 notas:            notas || null,
                 persona_id:       persona_id ? Number(persona_id) : null,
+                fbc:              fbc || null,
+                fbp:              fbp || null,
                 usuario:          usuarioId,
                 business_id:      businessId,
             },
+        });
+
+        // Meta Conversions API: notificar la entrada del lead al embudo (no bloquea el flujo)
+        await sendLeadEvent({
+            lead,
+            eventName: estadoToEventName(estadoFinal),
+            eventId:   event_id,
+            leadId:    lead_id,
+            ...getClientMeta(req),
         });
 
         return res.status(201).json({ success: true, message: "Lead creado exitosamente", data: lead });
@@ -55,6 +70,7 @@ export const createLeadPublico = async (req, res) => {
         const {
             business_id, nombre, empresa, tipo_documento, numero_documento,
             email, telefono, origen, valor_estimado, notas,
+            fbc, fbp, event_id, lead_id,
         } = req.body;
 
         const businessId = Number(business_id);
@@ -73,9 +89,23 @@ export const createLeadPublico = async (req, res) => {
                 estado:           'NUEVO', // todo lead público entra como nuevo
                 valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
                 notas:            notas || null,
+                fbc:              fbc || null,
+                fbp:              fbp || null,
                 usuario:          null,    // no hay usuario autenticado
                 business_id:      businessId,
             },
+        });
+
+        // Meta Conversions API: evento 'Lead' server-side (la etapa inicial del embudo).
+        // event_id se comparte con el Pixel del navegador para deduplicar.
+        await sendLeadEvent({
+            lead,
+            eventName: estadoToEventName('NUEVO'), // 'Lead'
+            eventId:   event_id,
+            leadId:    lead_id,
+            fbc,
+            fbp,
+            ...getClientMeta(req),
         });
 
         return res.status(201).json({ success: true, message: "¡Gracias! Tus datos fueron registrados.", data: { id: lead.id } });
@@ -104,7 +134,7 @@ export const updateLeadPublico = async (req, res) => {
         // El lead debe existir Y pertenecer a ese negocio (evita editar leads de otro business)
         const existe = await prisma.crm_leads.findFirst({
             where: { id: Number(id), business_id: businessId },
-            select: { id: true },
+            select: { id: true, estado: true },
         });
         if (!existe) return res.status(404).json({ message: "Lead no encontrado" });
 
@@ -131,6 +161,16 @@ export const updateLeadPublico = async (req, res) => {
                 updated_at: new Date(),
             },
         });
+
+        // Meta Conversions API: enviar evento solo si el estado cambió a uno nuevo.
+        if (estado !== undefined && estado !== existe.estado) {
+            await sendLeadEvent({
+                lead, // trae fbc/fbp guardados en la creación
+                eventName: estadoToEventName(estado),
+                eventId:   req.body.event_id,
+                ...getClientMeta(req),
+            });
+        }
 
         return res.status(200).json({ success: true, message: "Lead actualizado", data: lead });
     } catch (error) {
@@ -279,7 +319,7 @@ export const updateLead = async (req, res) => {
 
         const existe = await prisma.crm_leads.findFirst({
             where: { id: Number(id), business_id: businessId },
-            select: { id: true },
+            select: { id: true, estado: true },
         });
         if (!existe) return res.status(404).json({ message: "Lead no encontrado" });
 
@@ -307,6 +347,15 @@ export const updateLead = async (req, res) => {
                 updated_at: new Date(),
             },
         });
+
+        // Meta Conversions API: enviar evento solo si el estado cambió a uno nuevo.
+        if (estado !== undefined && estado !== existe.estado) {
+            await sendLeadEvent({
+                lead, // trae fbc/fbp guardados en la creación
+                eventName: estadoToEventName(estado),
+                ...getClientMeta(req),
+            });
+        }
 
         return res.status(200).json({ success: true, message: "Lead actualizado", data: lead });
     } catch (error) {
