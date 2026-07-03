@@ -14,6 +14,7 @@ const API_VERSION       = process.env.META_CAPI_API_VERSION       || "v25.0";
 const LEAD_EVENT_SOURCE = process.env.META_CAPI_LEAD_EVENT_SOURCE || "QControla CRM";
 const TEST_EVENT_CODE   = process.env.META_CAPI_TEST_EVENT_CODE   || ""; // solo para "Probar eventos"
 const DEFAULT_CC        = process.env.META_CAPI_DEFAULT_COUNTRY_CODE || "57"; // Colombia
+const CURRENCY          = process.env.META_CAPI_CURRENCY          || "COP"; // moneda para value
 // Se puede apagar por completo poniendo META_CAPI_ENABLED=false
 const ENABLED = String(process.env.META_CAPI_ENABLED ?? "true").toLowerCase() !== "false";
 
@@ -23,12 +24,14 @@ if (ENABLED && !ACCESS_TOKEN) {
 
 // ─── Mapa: estado del CRM -> event_name en Meta ───────────────────────────────
 // NUEVO usa 'Lead' para deduplicar con el Pixel del navegador (mismo event_name + event_id).
+// GANADO usa 'Purchase' (evento estándar de conversión): es la venta cerrada, la que
+// Meta optimiza por ROAS. Se envía con value + currency (ver custom_data en sendLeadEvent).
 const ESTADO_EVENT_NAME = {
     NUEVO:      "Lead",
     CONTACTADO: "Contacted",
     CALIFICADO: "Qualified",
     PROPUESTA:  "Proposal",
-    GANADO:     "Converted",
+    GANADO:     "Purchase",
     PERDIDO:    "Disqualified",
 };
 
@@ -121,14 +124,22 @@ export const sendLeadEvent = async ({
         if (clientIpAddress)  user_data.client_ip_address = clientIpAddress;
         if (clientUserAgent)  user_data.client_user_agent = clientUserAgent;
 
+        const custom_data = {
+            event_source: "crm",
+            lead_event_source: LEAD_EVENT_SOURCE,
+        };
+        // Valor + moneda: imprescindible para Purchase (ROAS), útil en cualquier evento.
+        const valor = Number(lead.valor_estimado);
+        if (Number.isFinite(valor) && valor > 0) {
+            custom_data.value = valor;
+            custom_data.currency = CURRENCY;
+        }
+
         const event = {
             event_name: eventName,
             event_time: eventTime,
             action_source: actionSource,
-            custom_data: {
-                event_source: "crm",
-                lead_event_source: LEAD_EVENT_SOURCE,
-            },
+            custom_data,
             user_data,
         };
         if (eventId) event.event_id = eventId;
