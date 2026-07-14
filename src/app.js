@@ -34,6 +34,9 @@ app.use(cors({
     'https://rapictrl.com',
     'https://www.certitecol.com',
     'https://www.validaciondebachillerato.com.co',
+    'https://www.alianzacapacitarte.com',    // Landing Alianza Capacitarte — dominio principal (verificación)
+    'https://alianzacapacitarte.com',        // apex (redirige a www, por si acaso)
+    'https://alianzacapacitarte.vercel.app', // dominio Vercel por defecto / previews
     'http://127.0.0.1:5501'
   ]
 }));
