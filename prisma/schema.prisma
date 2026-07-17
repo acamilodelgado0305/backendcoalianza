@@ -80,6 +80,7 @@ model cuentas_por_pagar {
   total             Decimal?  @default(0) @db.Decimal(12, 2)
   total_abonado     Decimal?  @default(0) @db.Decimal(12, 2)
   abonos            Json      @default("[]")
+  cargos            Json      @default("[]")
   estado              String?   @default("PENDIENTE") @db.VarChar(30)
   notas               String?
   fecha_emision       DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date

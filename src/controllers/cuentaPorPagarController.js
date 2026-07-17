@@ -366,6 +366,68 @@ export const registrarAbono = async (req, res) => {
     }
 };
 
+// ─── 6b. AUMENTAR DEUDA ───────────────────────────────────────────────────────
+// Suma un monto al total de una cuenta existente (misma persona vuelve a prestar).
+// Deja rastro en `cargos` y recalcula estado/fecha_pago. No aplica a préstamos con
+// cronograma (esos se manejan editando el préstamo o creando una cuenta nueva).
+export const aumentarDeuda = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        const { id }     = req.params;
+        const { monto, nota } = req.body;
+
+        const montoNum = Number(monto);
+        if (!montoNum || montoNum <= 0) {
+            return res.status(400).json({ message: 'El monto a aumentar debe ser mayor a 0' });
+        }
+
+        const cuentaActualizada = await prisma.$transaction(async (tx) => {
+            // Lectura vía SQL crudo: incluye `cargos` aunque el cliente Prisma aún no
+            // esté regenerado (evita perder el historial de aumentos).
+            const [prev] = await tx.$queryRaw(Prisma.sql`
+                SELECT * FROM cuentas_por_pagar
+                WHERE id = ${Number(id)} AND business_id = ${businessId}
+            `);
+            if (!prev) throw Object.assign(new Error('Cuenta por pagar no encontrada'), { status: 404 });
+            if (prev.es_prestamo) {
+                throw Object.assign(new Error('Los préstamos con cronograma no admiten aumento directo de deuda. Edita el préstamo o crea una cuenta nueva.'), { status: 400 });
+            }
+            if (prev.estado === 'ANULADA') throw Object.assign(new Error('La cuenta está anulada'), { status: 400 });
+
+            const cargosAnt = Array.isArray(prev.cargos)
+                ? prev.cargos
+                : (typeof prev.cargos === 'string' ? JSON.parse(prev.cargos || '[]') : []);
+
+            const nuevoCargo   = { id: uuidv4(), fecha: new Date().toISOString(), monto: montoNum, nota: nota || null };
+            const cargosNuevos = [...cargosAnt, nuevoCargo];
+
+            const nuevoTotal   = round2(Number(prev.total || 0) + montoNum);
+            const totalAbonado = Number(prev.total_abonado || 0);
+            const nuevoEstado  = totalAbonado >= nuevoTotal ? 'PAGADA' : (totalAbonado > 0 ? 'ABONO' : 'PENDIENTE');
+            const fechaPago    = nuevoEstado === 'PAGADA' ? prev.fecha_pago : null;
+
+            await tx.$executeRaw(Prisma.sql`
+                UPDATE cuentas_por_pagar SET
+                    cargos     = ${JSON.stringify(cargosNuevos)}::jsonb,
+                    total      = ${nuevoTotal},
+                    estado     = ${nuevoEstado},
+                    fecha_pago = ${fechaPago},
+                    updated_at = NOW()
+                WHERE id = ${Number(id)}
+            `);
+
+            const [updated] = await tx.$queryRaw(Prisma.sql`SELECT * FROM cuentas_por_pagar WHERE id = ${Number(id)}`);
+            return updated;
+        });
+
+        return res.status(200).json(cuentaActualizada);
+    } catch (err) {
+        console.error('aumentarDeuda (cuentaPorPagar):', err);
+        const status = err.status || 500;
+        return res.status(status).json({ message: err.message || 'Error al aumentar la deuda' });
+    }
+};
+
 // ─── Helper: recalcular estado/total_abonado de un préstamo desde sus cuotas ──
 const sincronizarPrestamo = (cuotas) => {
     const lista = Array.isArray(cuotas)
