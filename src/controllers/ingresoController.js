@@ -250,10 +250,7 @@ export const getIngresosByUsuario = async (req, res) => {
         // json_agg con subquery de items requiere $queryRaw
         const conditions = [Prisma.sql`i.business_id = ${businessId}`];
         if (fecha_inicio) conditions.push(Prisma.sql`i."createdAt" >= ${new Date(fecha_inicio)}`);
-        if (fecha_fin) {
-            const fin = new Date(fecha_fin); fin.setHours(23, 59, 59, 999);
-            conditions.push(Prisma.sql`i."createdAt" <= ${fin}`);
-        }
+        if (fecha_fin) conditions.push(Prisma.sql`i."createdAt" <= ${new Date(fecha_fin)}`);
         if (cuenta)          conditions.push(Prisma.sql`i."cuenta" = ${cuenta}`);
         if (payment_status)  conditions.push(Prisma.sql`i."payment_status" = ${payment_status.toUpperCase()}`);
 
@@ -587,9 +584,14 @@ export const getIngresosDiarios = async (req, res) => {
         const todayDay   = parseInt(req.query.hoy)       || now.getDate();
         const utcOffset  = parseFloat(req.query.utcOffset) || 0; // ej: -5 para Colombia
 
-        const monthStart  = new Date(year, month - 1, 1, 0, 0, 0, 0);
-        const monthEnd    = new Date(year, month,     0, 23, 59, 59, 999);
-        const daysInMonth = monthEnd.getDate();
+        // monthStart/monthEnd deben ser el inicio/fin del mes en la hora LOCAL del
+        // usuario, expresados como instante UTC — por eso se restan las horas de
+        // utcOffset (si no, el WHERE filtra en hora del servidor mientras el EXTRACT
+        // de abajo agrupa en hora del usuario, y se desalinean).
+        const offsetMs    = utcOffset * 60 * 60 * 1000;
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const monthStart  = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0) - offsetMs);
+        const monthEnd    = new Date(Date.UTC(year, month,     0, 23, 59, 59, 999) - offsetMs);
         const lastDay     = (year === now.getFullYear() && month === (now.getMonth() + 1))
             ? todayDay
             : daysInMonth;
@@ -634,8 +636,11 @@ export const getIngresosMensuales = async (req, res) => {
         const mesActual = parseInt(req.query.mes_actual) || now.getMonth() + 1;
         const utcOffset = parseFloat(req.query.utcOffset) || 0;
 
-        const yearStart = new Date(year, 0,  1, 0,  0,  0,   0);
-        const yearEnd   = new Date(year, 11, 31, 23, 59, 59, 999);
+        // Mismo ajuste que en getIngresosDiarios: el rango debe expresarse en UTC
+        // a partir de la hora local del usuario, no de la hora del servidor.
+        const offsetMs  = utcOffset * 60 * 60 * 1000;
+        const yearStart = new Date(Date.UTC(year, 0,  1, 0,  0,  0,   0) - offsetMs);
+        const yearEnd   = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999) - offsetMs);
         const lastMonth = (year === now.getFullYear()) ? mesActual : 12;
 
         const rows = await prisma.$queryRaw(Prisma.sql`
