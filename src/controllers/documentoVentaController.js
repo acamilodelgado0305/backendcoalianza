@@ -98,14 +98,14 @@ export const getDocumentosVenta = async (req, res) => {
         if (estado) conditions.push(Prisma.sql`dv.estado = ${estado}`);
         if (q) {
             const like = `%${q}%`;
-            conditions.push(Prisma.sql`(dv.numero ILIKE ${like} OR dv.cliente_nombre ILIKE ${like} OR p.nombre ILIKE ${like})`);
+            conditions.push(Prisma.sql`(dv.numero ILIKE ${like} OR dv.cliente_nombre ILIKE ${like} OR p.nombre ILIKE ${like} OR p.apellido ILIKE ${like})`);
         }
 
         const whereClause = Prisma.join(conditions, ' AND ');
 
         const rows = await prisma.$queryRaw(Prisma.sql`
             SELECT dv.*,
-                   p.nombre  AS persona_nombre,
+                   NULLIF(TRIM(CONCAT(p.nombre, ' ', COALESCE(p.apellido, ''))), '') AS persona_nombre,
                    p.celular AS persona_celular
             FROM documentos_venta dv
             LEFT JOIN personas p ON dv.persona_id = p.id
@@ -128,7 +128,7 @@ export const getDocumentoVentaById = async (req, res) => {
 
         const [row] = await prisma.$queryRaw(Prisma.sql`
             SELECT dv.*,
-                   p.nombre  AS persona_nombre,
+                   NULLIF(TRIM(CONCAT(p.nombre, ' ', COALESCE(p.apellido, ''))), '') AS persona_nombre,
                    p.celular AS persona_celular,
                    p.email   AS persona_email
             FROM documentos_venta dv

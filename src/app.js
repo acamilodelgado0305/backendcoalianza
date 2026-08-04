@@ -32,6 +32,7 @@ app.use(cors({
     'https://quickcontrola.com',
     'https://santasofia.vercel.app',
     'https://rapictrl.com',
+    'https://app.rapictrl.com',
     'https://www.certitecol.com',
     'https://www.validaciondebachillerato.com.co',
     'https://www.alianzacapacitarte.com',    // Landing Alianza Capacitarte — dominio principal (verificación)

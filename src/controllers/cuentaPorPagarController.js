@@ -131,14 +131,14 @@ export const getCuentasPorPagar = async (req, res) => {
         if (estado) conditions.push(Prisma.sql`cpp.estado = ${estado}`);
         if (q) {
             const like = `%${q}%`;
-            conditions.push(Prisma.sql`(cpp.titulo ILIKE ${like} OR cpp.proveedor_nombre ILIKE ${like} OR p.nombre ILIKE ${like})`);
+            conditions.push(Prisma.sql`(cpp.titulo ILIKE ${like} OR cpp.proveedor_nombre ILIKE ${like} OR p.nombre ILIKE ${like} OR p.apellido ILIKE ${like})`);
         }
 
         const whereClause = Prisma.join(conditions, ' AND ');
 
         const rows = await prisma.$queryRaw(Prisma.sql`
             SELECT cpp.*,
-                   p.nombre  AS persona_nombre,
+                   NULLIF(TRIM(CONCAT(p.nombre, ' ', COALESCE(p.apellido, ''))), '') AS persona_nombre,
                    p.celular AS persona_celular
             FROM cuentas_por_pagar cpp
             LEFT JOIN personas p ON cpp.persona_id = p.id
@@ -161,7 +161,7 @@ export const getCuentaPorPagarById = async (req, res) => {
 
         const [row] = await prisma.$queryRaw(Prisma.sql`
             SELECT cpp.*,
-                   p.nombre  AS persona_nombre,
+                   NULLIF(TRIM(CONCAT(p.nombre, ' ', COALESCE(p.apellido, ''))), '') AS persona_nombre,
                    p.celular AS persona_celular,
                    p.email   AS persona_email
             FROM cuentas_por_pagar cpp
