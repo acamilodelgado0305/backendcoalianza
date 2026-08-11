@@ -109,7 +109,10 @@ export const getPersonaById = async (req, res) => {
 export const updatePersona = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, apellido, direccion, celular, email, tipo } = req.body;
+        const {
+            tipo_documento, numero_documento, nombre,
+            apellido, direccion, celular, email, tipo
+        } = req.body;
         const businessId = req.user?.bid;
 
         const existe = await prisma.personas.findFirst({
@@ -118,9 +121,29 @@ export const updatePersona = async (req, res) => {
         });
         if (!existe) return res.status(404).json({ message: "Persona no encontrada" });
 
+        // El documento puede venir vacío => se guarda como null
+        const nuevoDocumento = numero_documento !== undefined
+            ? (String(numero_documento).trim() || null)
+            : undefined;
+
+        // Un mismo documento no puede repetirse dentro del negocio
+        if (nuevoDocumento) {
+            const duplicado = await prisma.personas.findFirst({
+                where: {
+                    numero_documento: nuevoDocumento,
+                    business_id: businessId,
+                    NOT: { id: Number(id) },
+                },
+                select: { id: true },
+            });
+            if (duplicado) return res.status(409).json({ message: "Ya existe un contacto con ese número de documento en este negocio." });
+        }
+
         const persona = await prisma.personas.update({
             where: { id: Number(id) },
             data: {
+                ...(tipo_documento   && { tipo_documento }),
+                ...(nuevoDocumento   !== undefined && { numero_documento: nuevoDocumento }),
                 ...(nombre    !== undefined && { nombre }),
                 ...(apellido  !== undefined && { apellido }),
                 ...(direccion !== undefined && { direccion }),
@@ -134,6 +157,9 @@ export const updatePersona = async (req, res) => {
         return res.status(200).json({ success: true, message: "Datos actualizados", data: persona });
     } catch (error) {
         console.error("Error actualizando persona:", error);
+        if (error.code === 'P2002') {
+            return res.status(409).json({ message: "Ya existe un contacto con ese número de documento en este negocio." });
+        }
         return res.status(500).json({ message: "Error al actualizar" });
     }
 };

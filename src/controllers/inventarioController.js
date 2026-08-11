@@ -433,7 +433,7 @@ export const restockInventario = async (req, res) => {
         });
 
         const msg = registrarEgreso
-            ? `Compra registrada. +${unidades} unidades y egreso de $${valorTotal.toLocaleString('es-CO')}.`
+            ? `Compra registrada. +${unidades} unidades y egreso de $${valorTotal.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
             : `Stock actualizado. +${unidades} unidades agregadas sin costo.`;
 
         return res.status(200).json({ message: msg, data: updatedItem });
