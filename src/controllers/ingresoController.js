@@ -2,6 +2,7 @@ import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadReceiptToGCS } from '../services/gcsPaymentReceipts.js';
+import { parseRangoInicio, parseRangoFin } from '../utils/dateRange.js';
 
 // ==========================================
 // 1. CREAR INGRESO (Privado / Admin)
@@ -244,13 +245,13 @@ export const getIngresosByUsuario = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No autorizado" });
 
-        const { fecha_inicio, fecha_fin, cuenta, payment_status, page = 1, limit = 50 } = req.query;
+        const { fecha_inicio, fecha_fin, cuenta, payment_status, tz_offset, page = 1, limit = 50 } = req.query;
         const offset = (Number(page) - 1) * Number(limit);
 
         // json_agg con subquery de items requiere $queryRaw
         const conditions = [Prisma.sql`i.business_id = ${businessId}`];
-        if (fecha_inicio) conditions.push(Prisma.sql`i."createdAt" >= ${new Date(fecha_inicio)}`);
-        if (fecha_fin) conditions.push(Prisma.sql`i."createdAt" <= ${new Date(fecha_fin)}`);
+        if (fecha_inicio) conditions.push(Prisma.sql`i."createdAt" >= ${parseRangoInicio(fecha_inicio, tz_offset)}`);
+        if (fecha_fin)    conditions.push(Prisma.sql`i."createdAt" <= ${parseRangoFin(fecha_fin, tz_offset)}`);
         if (cuenta)          conditions.push(Prisma.sql`i."cuenta" = ${cuenta}`);
         if (payment_status)  conditions.push(Prisma.sql`i."payment_status" = ${payment_status.toUpperCase()}`);
 
@@ -301,6 +302,7 @@ export const getIngresosByUsuario = async (req, res) => {
             pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
         });
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         console.error("Error al obtener ingresos:", error);
         return res.status(500).json({ message: "Error al obtener los ingresos", error: error.message });
     }
@@ -361,18 +363,18 @@ export const getIngresoStats = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No autorizado" });
 
-        const { fecha_inicio, fecha_fin } = req.query;
+        const { fecha_inicio, fecha_fin, tz_offset } = req.query;
 
         const condApproved = [Prisma.sql`business_id = ${businessId}`, Prisma.sql`payment_status = 'APPROVED'`];
         const condAll      = [Prisma.sql`business_id = ${businessId}`];
 
         if (fecha_inicio) {
-            const fi = new Date(fecha_inicio);
+            const fi = parseRangoInicio(fecha_inicio, tz_offset);
             condApproved.push(Prisma.sql`"createdAt" >= ${fi}`);
             condAll.push(Prisma.sql`"createdAt" >= ${fi}`);
         }
         if (fecha_fin) {
-            const fin = new Date(fecha_fin); fin.setHours(23, 59, 59, 999);
+            const fin = parseRangoFin(fecha_fin, tz_offset);
             condApproved.push(Prisma.sql`"createdAt" <= ${fin}`);
             condAll.push(Prisma.sql`"createdAt" <= ${fin}`);
         }
@@ -416,6 +418,7 @@ export const getIngresoStats = async (req, res) => {
             por_estado:   porEstado,
         });
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         return res.status(500).json({ message: "Error al obtener estadísticas", error: error.message });
     }
 };

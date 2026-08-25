@@ -1,5 +1,6 @@
 import prisma from '../prisma.js';
 import { sendLeadEvent, estadoToEventName, getClientMeta } from '../services/metaConversions.js';
+import { buildFiltroFechas } from '../utils/dateRange.js';
 
 // Estados y orígenes válidos (mismos valores que usa el frontend)
 const ESTADOS_VALIDOS = ['NUEVO', 'CONTACTADO', 'CALIFICADO', 'PROPUESTA', 'GANADO', 'PERDIDO'];
@@ -187,12 +188,14 @@ export const getLeads = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        const { q, estado, origen, fecha_inicio, fecha_fin } = req.query;
+        const { q, estado, origen } = req.query;
+        const rangoFechas = buildFiltroFechas(req.query);
 
         const where = {
             business_id: businessId,
             ...(estado && { estado }),
             ...(origen && { origen }),
+            ...(rangoFechas && { created_at: rangoFechas }),
             ...(q && {
                 OR: [
                     { nombre:   { contains: q, mode: 'insensitive' } },
@@ -203,20 +206,6 @@ export const getLeads = async (req, res) => {
             }),
         };
 
-        if (fecha_inicio) {
-            where.created_at = {
-                gte: new Date(fecha_inicio),
-            };
-        }
-        if (fecha_fin) {
-            const fin = new Date(fecha_fin);
-            fin.setHours(23, 59, 59, 999);
-            where.created_at = {
-                ...(where.created_at || {}),
-                lte: fin,
-            };
-        }
-
         const leads = await prisma.crm_leads.findMany({
             where,
             orderBy: { created_at: 'desc' },
@@ -224,6 +213,7 @@ export const getLeads = async (req, res) => {
 
         return res.status(200).json(leads);
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         console.error("Error en getLeads:", error.message);
         return res.status(500).json({ message: "Error interno al obtener los leads" });
     }
@@ -256,25 +246,12 @@ export const getLeadStats = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        const { fecha_inicio, fecha_fin } = req.query;
+        const rangoFechas = buildFiltroFechas(req.query);
 
         const where = {
             business_id: businessId,
+            ...(rangoFechas && { created_at: rangoFechas }),
         };
-
-        if (fecha_inicio) {
-            where.created_at = {
-                gte: new Date(fecha_inicio),
-            };
-        }
-        if (fecha_fin) {
-            const fin = new Date(fecha_fin);
-            fin.setHours(23, 59, 59, 999);
-            where.created_at = {
-                ...(where.created_at || {}),
-                lte: fin,
-            };
-        }
 
         const grupos = await prisma.crm_leads.groupBy({
             by: ['estado'],
@@ -300,6 +277,7 @@ export const getLeadStats = async (req, res) => {
 
         return res.status(200).json({ total, valorPipeline, porEstado });
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         console.error("Error en getLeadStats:", error);
         return res.status(500).json({ message: "Error al obtener estadísticas" });
     }

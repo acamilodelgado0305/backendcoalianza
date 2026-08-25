@@ -1,5 +1,6 @@
 import prisma from '../prisma.js';
 import { v4 as uuidv4 } from 'uuid';
+import { buildFiltroFechas } from '../utils/dateRange.js';
 
 // Prisma devuelve el campo `_id` de la DB como `legacyId` (por el @map).
 // El frontend espera `_id`, así que normalizamos antes de responder.
@@ -50,23 +51,19 @@ export const getEgresosByUsuario = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        const { fecha_inicio, fecha_fin } = req.query;
+        const rangoFechas = buildFiltroFechas(req.query);
 
         const egresos = await prisma.egresos.findMany({
             where: {
                 business_id: businessId,
-                ...(fecha_inicio || fecha_fin ? {
-                    fecha: {
-                        ...(fecha_inicio && { gte: new Date(fecha_inicio) }),
-                        ...(fecha_fin && { lte: new Date(new Date(fecha_fin).setHours(23, 59, 59, 999)) }),
-                    },
-                } : {}),
+                ...(rangoFechas && { fecha: rangoFechas }),
             },
             orderBy: [{ fecha: 'desc' }, { createdAt: 'desc' }],
         });
 
         return res.status(200).json(egresos.map(normalizeEgreso));
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         console.error("Error al obtener los egresos:", error);
         return res.status(500).json({ message: "Error al obtener los egresos", error: error.message });
     }
