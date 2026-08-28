@@ -8,8 +8,7 @@ import {
   deleteCuentaPorPagar,
   registrarAbono,
   aumentarDeuda,
-  pagarCuota,
-  revertirCuota,
+  editarMontoMovimiento,
   getEstadisticasCuentasPorPagar,
 } from '../controllers/cuentaPorPagarController.js';
 
@@ -25,7 +24,6 @@ router.put('/:id',         updateCuentaPorPagar);
 router.delete('/:id',      deleteCuentaPorPagar);
 router.post('/:id/abonar',   registrarAbono);
 router.post('/:id/aumentar', aumentarDeuda);
-router.post('/:id/cuotas/:numero/pagar',    pagarCuota);
-router.post('/:id/cuotas/:numero/revertir', revertirCuota);
+router.put('/:id/movimientos/:movId', editarMontoMovimiento);
 
 export default router;

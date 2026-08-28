@@ -1,53 +1,24 @@
 import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
+import { toDateOnly, hoyDateOnly, dateOnlyStr, sumarMeses, serializeFechas } from '../utils/fechas.js';
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-// ─── Generador de cronograma: interés sobre saldo, abono a capital fijo ───────
-// tasa_ea = tasa efectiva anual en % (ej: 19.56). Se convierte a mensual equivalente.
-const generarCronogramaPrestamo = ({ capital, tasa_ea, num_cuotas, fecha_primera_cuota }) => {
-    const cap = Number(capital)   || 0;
-    const n   = Number(num_cuotas) || 0;
-    const ea  = Number(tasa_ea)    || 0;
+// Fechas «solo día»: ver BACKEND/src/utils/fechas.js
+const CAMPOS_FECHA = ['fecha_emision', 'fecha_vencimiento', 'fecha_pago'];
+const serializeCuenta = (row) => serializeFechas(row, CAMPOS_FECHA);
 
-    if (cap <= 0 || n <= 0) return { cuotas: [], total: round2(cap) };
-
-    const tasaMensual  = Math.pow(1 + ea / 100, 1 / 12) - 1;
-    const capitalCuota = cap / n;
-    const base = fecha_primera_cuota ? new Date(fecha_primera_cuota) : new Date();
-
-    const cuotas = [];
-    let totalInteres = 0;
-
-    for (let i = 1; i <= n; i++) {
-        const saldoInicial = cap - capitalCuota * (i - 1);
-        const interes      = round2(saldoInicial * tasaMensual);
-        // La última cuota absorbe el redondeo del capital
-        const capCuota     = i === n ? round2(saldoInicial) : round2(capitalCuota);
-        const valor        = round2(capCuota + interes);
-        const saldoFinal   = round2(saldoInicial - capCuota);
-        totalInteres += interes;
-
-        const fecha = new Date(base);
-        fecha.setMonth(fecha.getMonth() + (i - 1));
-
-        cuotas.push({
-            numero:            i,
-            fecha_vencimiento: fecha.toISOString().slice(0, 10),
-            capital:           capCuota,
-            interes,
-            valor,
-            saldo:             saldoFinal < 0 ? 0 : saldoFinal,
-            estado:            'PENDIENTE',
-            fecha_pago:        null,
-            cuenta:            null,
-            nota:              null,
-        });
-    }
-
-    return { cuotas, total: round2(cap + totalInteres) };
+// ─── Cuotas ───────────────────────────────────────────────────────────────────
+// Una cuenta se paga en N cuotas de un valor fijo (N = 1 es el caso normal).
+// El total es N × valor_cuota, y el vencimiento cae N meses después de la emisión.
+const normalizarNumCuotas = (v) => {
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) && n > 0 ? n : 1;
 };
+
+const vencimientoPorCuotas = (fechaEmision, numCuotas) =>
+    sumarMeses(toDateOnly(fechaEmision) || hoyDateOnly(), normalizarNumCuotas(numCuotas));
 
 // ─── 1. CREAR ─────────────────────────────────────────────────────────────────
 export const createCuentaPorPagar = async (req, res) => {
@@ -66,13 +37,8 @@ export const createCuentaPorPagar = async (req, res) => {
             notas,
             fecha_emision,
             fecha_vencimiento,
-            // Préstamo
-            es_prestamo = false,
-            capital,
-            tasa_ea,
             num_cuotas,
-            periodicidad = 'MENSUAL',
-            fecha_primera_cuota,
+            valor_cuota,
         } = req.body;
 
         if (!titulo || !titulo.trim()) {
@@ -87,32 +53,27 @@ export const createCuentaPorPagar = async (req, res) => {
             proveedor_nombre:  proveedor_nombre || null,
             estado:            'PENDIENTE',
             notas:             notas || null,
-            fecha_emision:     fecha_emision ? new Date(fecha_emision) : new Date(),
-            es_prestamo:       !!es_prestamo,
+            fecha_emision:     toDateOnly(fecha_emision) || hoyDateOnly(),
         };
 
-        if (es_prestamo) {
-            if (!(Number(capital) > 0) || !(Number(num_cuotas) > 0)) {
-                return res.status(400).json({ message: 'El préstamo requiere capital y número de cuotas válidos.' });
-            }
-            const { cuotas, total: totalCalc } = generarCronogramaPrestamo({ capital, tasa_ea, num_cuotas, fecha_primera_cuota });
-            data.capital             = Number(capital);
-            data.tasa_ea             = tasa_ea != null ? Number(tasa_ea) : null;
-            data.num_cuotas          = Number(num_cuotas);
-            data.periodicidad        = periodicidad || 'MENSUAL';
-            data.fecha_primera_cuota = fecha_primera_cuota ? new Date(fecha_primera_cuota) : new Date();
-            data.cuotas              = cuotas;
-            data.total               = totalCalc;
-            // Vencimiento = fecha de la última cuota
-            data.fecha_vencimiento   = cuotas.length ? new Date(cuotas[cuotas.length - 1].fecha_vencimiento) : null;
+        const cuotas = normalizarNumCuotas(num_cuotas);
+        const valorCuota = Number(valor_cuota);
+        data.num_cuotas  = cuotas;
+        // Con valor de cuota manda N × valor; si no, se respeta el total que llegue.
+        if (Number.isFinite(valorCuota) && valorCuota > 0) {
+            data.valor_cuota = round2(valorCuota);
+            data.total       = round2(cuotas * valorCuota);
         } else {
-            data.total             = Number(total) || 0;
-            data.fecha_vencimiento = fecha_vencimiento ? new Date(fecha_vencimiento) : null;
+            data.total       = round2(Number(total) || 0);
+            data.valor_cuota = cuotas > 0 ? round2(data.total / cuotas) : null;
         }
+        // El vencimiento explícito manda; si no llega, se deduce del número de cuotas.
+        data.fecha_vencimiento = toDateOnly(fecha_vencimiento)
+            || vencimientoPorCuotas(data.fecha_emision, cuotas);
 
         const cuenta = await prisma.cuentas_por_pagar.create({ data });
 
-        return res.status(201).json(cuenta);
+        return res.status(201).json(serializeCuenta(cuenta));
     } catch (err) {
         console.error('createCuentaPorPagar:', err);
         return res.status(500).json({ message: 'Error al crear cuenta por pagar', error: err.message });
@@ -146,7 +107,7 @@ export const getCuentasPorPagar = async (req, res) => {
             ORDER BY cpp.created_at DESC
         `);
 
-        return res.status(200).json(rows);
+        return res.status(200).json(rows.map(serializeCuenta));
     } catch (err) {
         console.error('getCuentasPorPagar:', err);
         return res.status(500).json({ message: 'Error al obtener cuentas por pagar' });
@@ -170,7 +131,7 @@ export const getCuentaPorPagarById = async (req, res) => {
         `);
 
         if (!row) return res.status(404).json({ message: 'Cuenta por pagar no encontrada' });
-        return res.status(200).json(row);
+        return res.status(200).json(serializeCuenta(row));
     } catch (err) {
         console.error('getCuentaPorPagarById:', err);
         return res.status(500).json({ message: 'Error al obtener cuenta por pagar' });
@@ -186,6 +147,7 @@ export const updateCuentaPorPagar = async (req, res) => {
         const allowed = [
             'titulo', 'persona_id', 'proveedor_nombre', 'total',
             'notas', 'estado', 'fecha_emision', 'fecha_vencimiento', 'fecha_pago',
+            'num_cuotas', 'valor_cuota',
         ];
         const dateFields = new Set(['fecha_emision', 'fecha_vencimiento', 'fecha_pago']);
 
@@ -193,9 +155,11 @@ export const updateCuentaPorPagar = async (req, res) => {
         for (const key of allowed) {
             if (req.body[key] !== undefined) {
                 if (dateFields.has(key)) {
-                    updateData[key] = req.body[key] ? new Date(req.body[key]) : null;
-                } else if (key === 'total') {
-                    updateData[key] = Number(req.body[key]) || 0;
+                    updateData[key] = toDateOnly(req.body[key]);
+                } else if (key === 'total' || key === 'valor_cuota') {
+                    updateData[key] = round2(Number(req.body[key]) || 0);
+                } else if (key === 'num_cuotas') {
+                    updateData[key] = normalizarNumCuotas(req.body[key]);
                 } else {
                     updateData[key] = req.body[key];
                 }
@@ -204,59 +168,36 @@ export const updateCuentaPorPagar = async (req, res) => {
 
         const prev = await prisma.cuentas_por_pagar.findFirst({
             where: { id: Number(id), business_id: businessId },
-            select: { id: true, es_prestamo: true, total_abonado: true },
+            select: { id: true, total: true, num_cuotas: true, valor_cuota: true, fecha_emision: true },
         });
         if (!prev) return res.status(404).json({ message: 'Cuenta por pagar no encontrada' });
 
-        // ── Préstamo: maneja crear/convertir/editar/quitar cronograma ──
-        const seraPrestamo = req.body.es_prestamo !== undefined ? !!req.body.es_prestamo : !!prev.es_prestamo;
-        const yaAbonado    = Number(prev.total_abonado || 0) > 0;
+        // ── Cuotas: total = N × valor_cuota, y el vencimiento sigue al número de cuotas ──
+        const cambiaCuotas = req.body.num_cuotas  !== undefined;
+        const cambiaValor  = req.body.valor_cuota !== undefined;
 
-        if (req.body.es_prestamo !== undefined) {
-            updateData.es_prestamo = seraPrestamo;
-        }
+        if (cambiaCuotas || cambiaValor) {
+            const cuotas = cambiaCuotas ? updateData.num_cuotas : normalizarNumCuotas(prev.num_cuotas);
+            const valor  = cambiaValor
+                ? updateData.valor_cuota
+                : Number(prev.valor_cuota || 0);
 
-        if (seraPrestamo) {
-            const esConversion      = !prev.es_prestamo; // antes no era préstamo
-            const cambianParametros =
-                req.body.capital !== undefined || req.body.tasa_ea !== undefined ||
-                req.body.num_cuotas !== undefined || req.body.fecha_primera_cuota !== undefined;
-
-            if (esConversion || cambianParametros) {
-                if (yaAbonado) {
-                    return res.status(400).json({
-                        message: prev.es_prestamo
-                            ? 'No se pueden cambiar los parámetros del préstamo porque ya tiene cuotas pagadas.'
-                            : 'No se puede convertir a préstamo una cuenta que ya tiene abonos registrados.',
-                    });
-                }
-                const { capital, tasa_ea, num_cuotas, fecha_primera_cuota } = req.body;
-                if (!(Number(capital) > 0) || !(Number(num_cuotas) > 0)) {
-                    return res.status(400).json({ message: 'El préstamo requiere capital y número de cuotas válidos.' });
-                }
-                const { cuotas, total: totalCalc } = generarCronogramaPrestamo({ capital, tasa_ea, num_cuotas, fecha_primera_cuota });
-                updateData.es_prestamo         = true;
-                updateData.capital             = Number(capital);
-                updateData.tasa_ea             = tasa_ea != null ? Number(tasa_ea) : null;
-                updateData.num_cuotas          = Number(num_cuotas);
-                updateData.periodicidad        = req.body.periodicidad || 'MENSUAL';
-                updateData.fecha_primera_cuota = fecha_primera_cuota ? new Date(fecha_primera_cuota) : new Date();
-                updateData.cuotas              = cuotas;
-                updateData.total               = totalCalc;
-                updateData.fecha_vencimiento   = cuotas.length ? new Date(cuotas[cuotas.length - 1].fecha_vencimiento) : null;
+            if (valor > 0) {
+                updateData.num_cuotas  = cuotas;
+                updateData.valor_cuota = round2(valor);
+                // Un total explícito en el mismo request manda sobre el calculado.
+                if (req.body.total === undefined) updateData.total = round2(cuotas * valor);
+            } else if (cambiaCuotas) {
+                updateData.num_cuotas = cuotas;
             }
-        } else if (prev.es_prestamo && req.body.es_prestamo === false) {
-            // Quitar el préstamo y volver a cuenta simple
-            if (yaAbonado) {
-                return res.status(400).json({ message: 'No se puede quitar el préstamo porque ya tiene cuotas pagadas.' });
+
+            // Solo se recalcula si el cliente no mandó un vencimiento propio.
+            if (cambiaCuotas && req.body.fecha_vencimiento === undefined) {
+                const emision = req.body.fecha_emision !== undefined
+                    ? updateData.fecha_emision
+                    : prev.fecha_emision;
+                updateData.fecha_vencimiento = vencimientoPorCuotas(emision, cuotas);
             }
-            updateData.es_prestamo         = false;
-            updateData.cuotas              = [];
-            updateData.capital             = null;
-            updateData.tasa_ea             = null;
-            updateData.num_cuotas          = null;
-            updateData.fecha_primera_cuota = null;
-            // total y fecha_vencimiento llegan desde el body (campos permitidos)
         }
 
         if (!Object.keys(updateData).length) {
@@ -265,7 +206,7 @@ export const updateCuentaPorPagar = async (req, res) => {
 
         // Si se marca PAGADA manualmente, registrar fecha de pago
         if (updateData.estado === 'PAGADA' && updateData.fecha_pago === undefined) {
-            updateData.fecha_pago = new Date();
+            updateData.fecha_pago = hoyDateOnly();
         }
 
         const cuenta = await prisma.cuentas_por_pagar.update({
@@ -273,7 +214,7 @@ export const updateCuentaPorPagar = async (req, res) => {
             data:  { ...updateData, updated_at: new Date() },
         });
 
-        return res.status(200).json(cuenta);
+        return res.status(200).json(serializeCuenta(cuenta));
     } catch (err) {
         console.error('updateCuentaPorPagar:', err);
         return res.status(500).json({ message: 'Error al actualizar cuenta por pagar' });
@@ -337,7 +278,7 @@ export const registrarAbono = async (req, res) => {
                         abonos        = ${JSON.stringify(abonosNuevos)}::jsonb,
                         total_abonado = ${totalAbonado},
                         estado        = 'PAGADA',
-                        fecha_pago    = NOW(),
+                        fecha_pago    = ${dateOnlyStr(hoyDateOnly())}::date,
                         updated_at    = NOW()
                     WHERE id = ${Number(id)}
                 `);
@@ -358,7 +299,7 @@ export const registrarAbono = async (req, res) => {
             return updated;
         });
 
-        return res.status(200).json(cuentaActualizada);
+        return res.status(200).json(serializeCuenta(cuentaActualizada));
     } catch (err) {
         console.error('registrarAbono (cuentaPorPagar):', err);
         const status = err.status || 500;
@@ -368,8 +309,7 @@ export const registrarAbono = async (req, res) => {
 
 // ─── 6b. AUMENTAR DEUDA ───────────────────────────────────────────────────────
 // Suma un monto al total de una cuenta existente (misma persona vuelve a prestar).
-// Deja rastro en `cargos` y recalcula estado/fecha_pago. No aplica a préstamos con
-// cronograma (esos se manejan editando el préstamo o creando una cuenta nueva).
+// Deja rastro en `cargos` y recalcula estado/fecha_pago.
 export const aumentarDeuda = async (req, res) => {
     try {
         const businessId = req.user?.bid;
@@ -389,9 +329,6 @@ export const aumentarDeuda = async (req, res) => {
                 WHERE id = ${Number(id)} AND business_id = ${businessId}
             `);
             if (!prev) throw Object.assign(new Error('Cuenta por pagar no encontrada'), { status: 404 });
-            if (prev.es_prestamo) {
-                throw Object.assign(new Error('Los préstamos con cronograma no admiten aumento directo de deuda. Edita el préstamo o crea una cuenta nueva.'), { status: 400 });
-            }
             if (prev.estado === 'ANULADA') throw Object.assign(new Error('La cuenta está anulada'), { status: 400 });
 
             const cargosAnt = Array.isArray(prev.cargos)
@@ -411,7 +348,7 @@ export const aumentarDeuda = async (req, res) => {
                     cargos     = ${JSON.stringify(cargosNuevos)}::jsonb,
                     total      = ${nuevoTotal},
                     estado     = ${nuevoEstado},
-                    fecha_pago = ${fechaPago},
+                    fecha_pago = ${dateOnlyStr(fechaPago)}::date,
                     updated_at = NOW()
                 WHERE id = ${Number(id)}
             `);
@@ -420,7 +357,7 @@ export const aumentarDeuda = async (req, res) => {
             return updated;
         });
 
-        return res.status(200).json(cuentaActualizada);
+        return res.status(200).json(serializeCuenta(cuentaActualizada));
     } catch (err) {
         console.error('aumentarDeuda (cuentaPorPagar):', err);
         const status = err.status || 500;
@@ -428,53 +365,72 @@ export const aumentarDeuda = async (req, res) => {
     }
 };
 
-// ─── Helper: recalcular estado/total_abonado de un préstamo desde sus cuotas ──
-const sincronizarPrestamo = (cuotas) => {
-    const lista = Array.isArray(cuotas)
-        ? cuotas
-        : (typeof cuotas === 'string' ? JSON.parse(cuotas || '[]') : []);
-    const totalAbonado = lista
-        .filter((c) => c.estado === 'PAGADA')
-        .reduce((s, c) => s + Number(c.valor || 0), 0);
-    const todasPagadas = lista.length > 0 && lista.every((c) => c.estado === 'PAGADA');
-    const algunaPagada = lista.some((c) => c.estado === 'PAGADA');
-    const estado = todasPagadas ? 'PAGADA' : (algunaPagada ? 'ABONO' : 'PENDIENTE');
-    return { lista, totalAbonado: round2(totalAbonado), estado, todasPagadas };
-};
-
-// ─── 7. PAGAR CUOTA DE PRÉSTAMO ───────────────────────────────────────────────
-export const pagarCuota = async (req, res) => {
+// ─── 6c. EDITAR EL MONTO DE UN MOVIMIENTO ─────────────────────────────────────
+// Corrige el valor de una línea del estado de cuenta sin tener que borrar y rehacer:
+//   movId = 'inicial'  -> deuda base (total menos los aumentos)
+//   movId = <uuid>     -> un abono o un aumento ya registrado
+// Si la cuenta tiene cuotas, al corregir el inicial se reparte de nuevo el valor de cuota.
+export const editarMontoMovimiento = async (req, res) => {
     try {
-        const businessId = req.user?.bid;
-        const { id, numero } = req.params;
-        const { cuenta = 'Efectivo', fecha_pago, nota } = req.body;
-        const numCuota = Number(numero);
+        const businessId    = req.user?.bid;
+        const { id, movId } = req.params;
+        const { monto }     = req.body;
 
-        const actualizada = await prisma.$transaction(async (tx) => {
-            const prev = await tx.cuentas_por_pagar.findFirst({
-                where: { id: Number(id), business_id: businessId },
-            });
+        const montoNum = Number(monto);
+        if (!Number.isFinite(montoNum) || montoNum <= 0) {
+            return res.status(400).json({ message: 'El monto debe ser mayor a 0' });
+        }
+
+        const cuentaActualizada = await prisma.$transaction(async (tx) => {
+            const [prev] = await tx.$queryRaw(Prisma.sql`
+                SELECT * FROM cuentas_por_pagar
+                WHERE id = ${Number(id)} AND business_id = ${businessId}
+            `);
             if (!prev) throw Object.assign(new Error('Cuenta por pagar no encontrada'), { status: 404 });
-            if (!prev.es_prestamo) throw Object.assign(new Error('Esta cuenta no es un préstamo'), { status: 400 });
+            if (prev.estado === 'ANULADA') throw Object.assign(new Error('La cuenta está anulada'), { status: 400 });
 
-            const { lista } = sincronizarPrestamo(prev.cuotas);
-            const cuota = lista.find((c) => Number(c.numero) === numCuota);
-            if (!cuota) throw Object.assign(new Error('Cuota no encontrada'), { status: 404 });
-            if (cuota.estado === 'PAGADA') throw Object.assign(new Error('La cuota ya está pagada'), { status: 400 });
+            const parseArr = (raw) => (Array.isArray(raw) ? raw : (typeof raw === 'string' ? JSON.parse(raw || '[]') : []));
+            const abonos = parseArr(prev.abonos);
+            const cargos = parseArr(prev.cargos);
 
-            cuota.estado     = 'PAGADA';
-            cuota.fecha_pago = fecha_pago || new Date().toISOString().slice(0, 10);
-            cuota.cuenta     = cuenta;
-            cuota.nota       = nota || null;
+            const sumCargos = cargos.reduce((s, c) => s + Number(c.monto || 0), 0);
+            // La deuda base es el total sin los aumentos posteriores.
+            let base = round2(Number(prev.total || 0) - sumCargos);
 
-            const { totalAbonado, estado, todasPagadas } = sincronizarPrestamo(lista);
+            if (movId === 'inicial') {
+                base = round2(montoNum);
+            } else {
+                const cargo = cargos.find((c) => String(c.id) === String(movId));
+                const abono = abonos.find((a) => String(a.id) === String(movId));
+
+                if (cargo)      cargo.monto = round2(montoNum);
+                else if (abono) abono.monto = round2(montoNum);
+                else throw Object.assign(new Error('Movimiento no encontrado'), { status: 404 });
+            }
+
+            const sumCargosNuevo = cargos.reduce((s, c) => s + Number(c.monto || 0), 0);
+            const nuevoTotal     = round2(base + sumCargosNuevo);
+            if (nuevoTotal <= 0) {
+                throw Object.assign(new Error('El total de la cuenta quedaría en cero o negativo'), { status: 400 });
+            }
+
+            const totalAbonado = round2(abonos.reduce((s, a) => s + Number(a.monto || 0), 0));
+            // El valor de cuota sigue al nuevo total para que N × valor cuadre.
+            const numCuotas  = normalizarNumCuotas(prev.num_cuotas);
+            const valorCuota = round2(nuevoTotal / numCuotas);
+
+            const nuevoEstado = totalAbonado >= nuevoTotal ? 'PAGADA' : (totalAbonado > 0 ? 'ABONO' : 'PENDIENTE');
+            const fechaPago   = nuevoEstado === 'PAGADA' ? (prev.fecha_pago || hoyDateOnly()) : null;
 
             await tx.$executeRaw(Prisma.sql`
                 UPDATE cuentas_por_pagar SET
-                    cuotas        = ${JSON.stringify(lista)}::jsonb,
+                    abonos        = ${JSON.stringify(abonos)}::jsonb,
+                    cargos        = ${JSON.stringify(cargos)}::jsonb,
+                    total         = ${nuevoTotal},
+                    valor_cuota   = ${valorCuota},
                     total_abonado = ${totalAbonado},
-                    estado        = ${estado},
-                    fecha_pago    = ${todasPagadas ? new Date() : null},
+                    estado        = ${nuevoEstado},
+                    fecha_pago    = ${dateOnlyStr(fechaPago)}::date,
                     updated_at    = NOW()
                 WHERE id = ${Number(id)}
             `);
@@ -483,59 +439,11 @@ export const pagarCuota = async (req, res) => {
             return updated;
         });
 
-        return res.status(200).json(actualizada);
+        return res.status(200).json(serializeCuenta(cuentaActualizada));
     } catch (err) {
-        console.error('pagarCuota:', err);
+        console.error('editarMontoMovimiento:', err);
         const status = err.status || 500;
-        return res.status(status).json({ message: err.message || 'Error al pagar cuota' });
-    }
-};
-
-// ─── 8. REVERTIR PAGO DE CUOTA ────────────────────────────────────────────────
-export const revertirCuota = async (req, res) => {
-    try {
-        const businessId = req.user?.bid;
-        const { id, numero } = req.params;
-        const numCuota = Number(numero);
-
-        const actualizada = await prisma.$transaction(async (tx) => {
-            const prev = await tx.cuentas_por_pagar.findFirst({
-                where: { id: Number(id), business_id: businessId },
-            });
-            if (!prev) throw Object.assign(new Error('Cuenta por pagar no encontrada'), { status: 404 });
-            if (!prev.es_prestamo) throw Object.assign(new Error('Esta cuenta no es un préstamo'), { status: 400 });
-
-            const { lista } = sincronizarPrestamo(prev.cuotas);
-            const cuota = lista.find((c) => Number(c.numero) === numCuota);
-            if (!cuota) throw Object.assign(new Error('Cuota no encontrada'), { status: 404 });
-            if (cuota.estado !== 'PAGADA') throw Object.assign(new Error('La cuota no está pagada'), { status: 400 });
-
-            cuota.estado     = 'PENDIENTE';
-            cuota.fecha_pago = null;
-            cuota.cuenta     = null;
-            cuota.nota       = null;
-
-            const { totalAbonado, estado, todasPagadas } = sincronizarPrestamo(lista);
-
-            await tx.$executeRaw(Prisma.sql`
-                UPDATE cuentas_por_pagar SET
-                    cuotas        = ${JSON.stringify(lista)}::jsonb,
-                    total_abonado = ${totalAbonado},
-                    estado        = ${estado},
-                    fecha_pago    = ${todasPagadas ? new Date() : null},
-                    updated_at    = NOW()
-                WHERE id = ${Number(id)}
-            `);
-
-            const [updated] = await tx.$queryRaw(Prisma.sql`SELECT * FROM cuentas_por_pagar WHERE id = ${Number(id)}`);
-            return updated;
-        });
-
-        return res.status(200).json(actualizada);
-    } catch (err) {
-        console.error('revertirCuota:', err);
-        const status = err.status || 500;
-        return res.status(status).json({ message: err.message || 'Error al revertir cuota' });
+        return res.status(status).json({ message: err.message || 'Error al editar el movimiento' });
     }
 };
 
@@ -558,7 +466,68 @@ export const getEstadisticasCuentasPorPagar = async (req, res) => {
             ORDER BY estado
         `);
 
-        return res.status(200).json(rows);
+        // ── Lo que se paga cada mes ──────────────────────────────────────────
+        // Una cuenta de N cuotas se paga una cuota por mes. `fecha_vencimiento`
+        // guarda la ÚLTIMA cuota, así que agrupar por ella metería un plan a 48
+        // cuotas entero en 2030 y no contaría nada en los meses que sí se pagan.
+        // El mes vale, entonces, una cuota de cada cuenta que aún deba algo.
+        const hoy    = hoyDateOnly();
+        const desde  = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), 1));
+        const hasta  = new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth() + 1, 1));
+
+        const [cuotas] = await prisma.$queryRaw(Prisma.sql`
+            WITH pendientes AS (
+                SELECT
+                    COALESCE(valor_cuota, total) AS valor_cuota,
+                    (COALESCE(total, 0) - COALESCE(total_abonado, 0)) AS saldo
+                FROM cuentas_por_pagar
+                WHERE business_id = ${businessId}
+                  AND estado NOT IN ('PAGADA', 'ANULADA')
+                  AND (COALESCE(total, 0) - COALESCE(total_abonado, 0)) > 0
+            ), conCuota AS (
+                SELECT saldo, LEAST(valor_cuota, saldo) AS cuota_mes, valor_cuota
+                FROM pendientes
+            )
+            SELECT
+                COUNT(*)::int                                                  AS cantidad,
+                COALESCE(SUM(cuota_mes), 0)                                    AS cuota_mes,
+                COUNT(*) FILTER (WHERE saldo - cuota_mes > 0)::int              AS cantidad_sig,
+                COALESCE(SUM(LEAST(valor_cuota, saldo - cuota_mes)), 0)         AS cuota_sig
+            FROM conCuota
+        `);
+
+        // Abonado dentro del mes en curso (por la fecha del abono, no del vencimiento).
+        const [abonadoMes] = await prisma.$queryRaw(Prisma.sql`
+            SELECT COALESCE(SUM((a->>'monto')::numeric), 0) AS pagado
+            FROM cuentas_por_pagar c
+            CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.abonos, '[]'::jsonb)) AS a
+            WHERE c.business_id = ${businessId}
+              AND c.estado <> 'ANULADA'
+              AND (a->>'fecha') IS NOT NULL
+              AND (a->>'fecha')::timestamptz >= ${dateOnlyStr(desde)}::date
+              AND (a->>'fecha')::timestamptz <  ${dateOnlyStr(hasta)}::date
+        `);
+
+        const totalMes  = Number(cuotas?.cuota_mes || 0);
+        const pagadoMes = Number(abonadoMes?.pagado || 0);
+
+        return res.status(200).json({
+            porEstado: rows,
+            mes: {
+                desde:    dateOnlyStr(desde),
+                cantidad: Number(cuotas?.cantidad || 0),
+                total:    totalMes,
+                pagado:   pagadoMes,
+                saldo:    Math.max(0, round2(totalMes - pagadoMes)),
+            },
+            mesSiguiente: {
+                desde:    dateOnlyStr(hasta),
+                cantidad: Number(cuotas?.cantidad_sig || 0),
+                total:    Number(cuotas?.cuota_sig || 0),
+                pagado:   0,
+                saldo:    Number(cuotas?.cuota_sig || 0),
+            },
+        });
     } catch (err) {
         console.error('getEstadisticasCuentasPorPagar:', err);
         return res.status(500).json({ message: 'Error al obtener estadísticas' });

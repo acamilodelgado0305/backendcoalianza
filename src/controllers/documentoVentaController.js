@@ -1,6 +1,26 @@
 import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
+import { toDateOnly, hoyDateOnly, dateOnlyStr, serializeFechas } from '../utils/fechas.js';
+
+// Las fechas «solo día» viajan como 'YYYY-MM-DD' para que el navegador no las
+// muestre un día antes por zona horaria (ver BACKEND/src/utils/fechas.js).
+const CAMPOS_FECHA = ['fecha_emision', 'fecha_vencimiento', 'fecha_pago'];
+
+// Filtro por mes: `mes` llega como 'YYYY-MM' y acota por fecha_emision.
+// Sin `mes` no se filtra nada (vista global).
+const rangoMes = (mes) => {
+    const m = /^(\d{4})-(\d{2})$/.exec(String(mes || ''));
+    if (!m) return null;
+    const anio = Number(m[1]);
+    const idx  = Number(m[2]) - 1;
+    if (idx < 0 || idx > 11) return null;
+    return {
+        desde: dateOnlyStr(new Date(Date.UTC(anio, idx, 1))),
+        hasta: dateOnlyStr(new Date(Date.UTC(anio, idx + 1, 1))),
+    };
+};
+const serializeDoc = (row) => serializeFechas(row, CAMPOS_FECHA);
 
 // ─── Generador de número secuencial por negocio ───────────────────────────────
 const generarNumero = async (tx, tipo, businessId) => {
@@ -68,16 +88,14 @@ export const createDocumentoVenta = async (req, res) => {
                     notas:                 notas       || null,
                     condiciones:           condiciones || null,
                     estado,
-                    fecha_emision:         fecha_emision
-                        ? new Date(fecha_emision)
-                        : new Date(),
-                    fecha_vencimiento:     fecha_vencimiento ? new Date(fecha_vencimiento) : null,
+                    fecha_emision:         toDateOnly(fecha_emision) || hoyDateOnly(),
+                    fecha_vencimiento:     toDateOnly(fecha_vencimiento),
                     origen_cotizacion_id:  origen_cotizacion_id || null,
                 },
             });
         });
 
-        return res.status(201).json(doc);
+        return res.status(201).json(serializeDoc(doc));
     } catch (err) {
         console.error('createDocumentoVenta:', err);
         return res.status(500).json({ message: 'Error al crear documento', error: err.message });
@@ -90,7 +108,8 @@ export const getDocumentosVenta = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        const { tipo, estado, q } = req.query;
+        const { tipo, estado, q, mes } = req.query;
+        const rango = rangoMes(mes);
 
         // LEFT JOIN con personas para búsqueda por nombre del contacto requiere $queryRaw
         const conditions = [Prisma.sql`dv.business_id = ${businessId}`];
@@ -99,6 +118,10 @@ export const getDocumentosVenta = async (req, res) => {
         if (q) {
             const like = `%${q}%`;
             conditions.push(Prisma.sql`(dv.numero ILIKE ${like} OR dv.cliente_nombre ILIKE ${like} OR p.nombre ILIKE ${like} OR p.apellido ILIKE ${like})`);
+        }
+        if (rango) {
+            conditions.push(Prisma.sql`dv.fecha_emision >= ${rango.desde}::date`);
+            conditions.push(Prisma.sql`dv.fecha_emision <  ${rango.hasta}::date`);
         }
 
         const whereClause = Prisma.join(conditions, ' AND ');
@@ -113,7 +136,7 @@ export const getDocumentosVenta = async (req, res) => {
             ORDER BY dv.created_at DESC
         `);
 
-        return res.status(200).json(rows);
+        return res.status(200).json(rows.map(serializeDoc));
     } catch (err) {
         console.error('getDocumentosVenta:', err);
         return res.status(500).json({ message: 'Error al obtener documentos' });
@@ -137,7 +160,7 @@ export const getDocumentoVentaById = async (req, res) => {
         `);
 
         if (!row) return res.status(404).json({ message: 'Documento no encontrado' });
-        return res.status(200).json(row);
+        return res.status(200).json(serializeDoc(row));
     } catch (err) {
         console.error('getDocumentoVentaById:', err);
         return res.status(500).json({ message: 'Error al obtener documento' });
@@ -164,8 +187,8 @@ export const updateDocumentoVenta = async (req, res) => {
         const updateData = {};
         for (const key of allowed) {
             if (bodyRest[key] !== undefined) {
-                updateData[key] = dateFields.has(key) && bodyRest[key]
-                    ? new Date(bodyRest[key])
+                updateData[key] = dateFields.has(key)
+                    ? toDateOnly(bodyRest[key])
                     : bodyRest[key];
             }
         }
@@ -245,7 +268,7 @@ export const updateDocumentoVenta = async (req, res) => {
             return updated;
         });
 
-        return res.status(200).json(doc);
+        return res.status(200).json(serializeDoc(doc));
     } catch (err) {
         console.error('updateDocumentoVenta:', err);
         const status = err.status || 500;
@@ -315,14 +338,14 @@ export const convertirCotizacionAFactura = async (req, res) => {
                     notas:                 cot.notas,
                     condiciones:           cot.condiciones,
                     estado:                'EMITIDA',
-                    fecha_emision:         new Date(),
-                    fecha_vencimiento:     cot.fecha_vencimiento,
+                    fecha_emision:         hoyDateOnly(),
+                    fecha_vencimiento:     toDateOnly(cot.fecha_vencimiento),
                     origen_cotizacion_id:  Number(id),
                 },
             });
         });
 
-        return res.status(201).json(factura);
+        return res.status(201).json(serializeDoc(factura));
     } catch (err) {
         console.error('convertirCotizacionAFactura:', err);
         const status = err.status || 500;
@@ -369,7 +392,7 @@ export const registrarAbono = async (req, res) => {
                         abonos        = ${JSON.stringify(abonosNuevos)}::jsonb,
                         total_abonado = ${totalAbonado},
                         estado        = 'PAGADA',
-                        fecha_pago    = NOW(),
+                        fecha_pago    = ${dateOnlyStr(hoyDateOnly())}::date,
                         updated_at    = NOW()
                     WHERE id = ${Number(id)}
                 `);
@@ -419,7 +442,7 @@ export const registrarAbono = async (req, res) => {
             return updated;
         });
 
-        return res.status(200).json(doc);
+        return res.status(200).json(serializeDoc(doc));
     } catch (err) {
         console.error('registrarAbono:', err);
         const status = err.status || 500;
@@ -463,13 +486,13 @@ export const duplicarDocumento = async (req, res) => {
                     notas:                  original.notas,
                     condiciones:            original.condiciones,
                     estado,
-                    fecha_emision:          new Date(),
-                    fecha_vencimiento:      original.fecha_vencimiento,
+                    fecha_emision:          hoyDateOnly(),
+                    fecha_vencimiento:      toDateOnly(original.fecha_vencimiento),
                 },
             });
         });
 
-        return res.status(201).json(nuevo);
+        return res.status(201).json(serializeDoc(nuevo));
     } catch (err) {
         console.error('duplicarDocumento:', err);
         const status = err.status || 500;
@@ -483,6 +506,11 @@ export const getEstadisticasDocumentos = async (req, res) => {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
+        const rango = rangoMes(req.query.mes);
+        const filtroMes = rango
+            ? Prisma.sql`AND fecha_emision >= ${rango.desde}::date AND fecha_emision < ${rango.hasta}::date`
+            : Prisma.empty;
+
         const rows = await prisma.$queryRaw(Prisma.sql`
             SELECT
                 tipo,
@@ -491,6 +519,7 @@ export const getEstadisticasDocumentos = async (req, res) => {
                 COALESCE(SUM(total), 0)  AS total_suma
             FROM documentos_venta
             WHERE business_id = ${businessId}
+            ${filtroMes}
             GROUP BY tipo, estado
             ORDER BY tipo, estado
         `);
