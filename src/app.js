@@ -15,6 +15,7 @@ import pedidoRoutes from './routes/pedidoRoutes.js';
 import documentoVentaRoutes from './routes/documentoVentaRoutes.js';
 import cuentaPorPagarRoutes from './routes/cuentaPorPagarRoutes.js';
 import crmLeadRoutes from './routes/crmLeadRoutes.js';
+import finanzasRoutes from './routes/finanzasRoutes.js';
 
 dotenv.config();
 
@@ -64,6 +65,7 @@ app.use('/api', clientRoutes);
 app.use('/api/documentos-venta', documentoVentaRoutes);
 app.use('/api/cuentas-por-pagar', cuentaPorPagarRoutes);
 app.use('/api/crm/leads', crmLeadRoutes);
+app.use('/api/finanzas', finanzasRoutes);
 
 // Conectar a la base de datos
 

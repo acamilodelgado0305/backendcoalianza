@@ -81,15 +81,15 @@ model cuentas_por_pagar {
   total_abonado     Decimal?  @default(0) @db.Decimal(12, 2)
   abonos            Json      @default("[]")
   cargos            Json      @default("[]")
-  estado              String?   @default("PENDIENTE") @db.VarChar(30)
-  notas               String?
-  fecha_emision       DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
-  fecha_vencimiento   DateTime? @db.Date
-  fecha_pago          DateTime? @db.Date
-  num_cuotas          Int?      @default(1)
-  valor_cuota         Decimal?  @db.Decimal(12, 2)
-  created_at          DateTime? @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime? @default(now()) @db.Timestamptz(6)
+  estado            String?   @default("PENDIENTE") @db.VarChar(30)
+  notas             String?
+  fecha_emision     DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
+  fecha_vencimiento DateTime? @db.Date
+  fecha_pago        DateTime? @db.Date
+  num_cuotas        Int?      @default(1)
+  valor_cuota       Decimal?  @db.Decimal(12, 2)
+  created_at        DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime? @default(now()) @db.Timestamptz(6)
 
   @@index([business_id], map: "idx_cpp_business_id")
   @@index([estado], map: "idx_cpp_estado")
@@ -200,7 +200,7 @@ model pedidos {
   cierre_id       Int?
   business_id     Int?
   detalle_pedidos detalle_pedidos[]
-  ingresos        ingresos[]         @ignore
+  ingresos        ingresos[]          @ignore
   cierres         cierres?            @relation(fields: [cierre_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_cierre")
   personas        personas?           @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_pedidos_persona")
 
@@ -240,17 +240,17 @@ model crm_leads {
   numero_documento String?   @db.VarChar(30)
   email            String?   @db.VarChar(150)
   telefono         String?   @db.VarChar(30)
-  origen         String?   @default("OTRO") @db.VarChar(30)
-  estado         String?   @default("NUEVO") @db.VarChar(30)
-  valor_estimado Decimal?  @default(0) @db.Decimal(12, 2)
-  notas          String?
-  persona_id     Int?
-  usuario        Int?
-  business_id    Int?
-  fbc            String?   @db.VarChar(255)
-  fbp            String?   @db.VarChar(255)
-  created_at     DateTime? @default(now()) @db.Timestamp(6)
-  updated_at     DateTime? @default(now()) @db.Timestamp(6)
+  origen           String?   @default("OTRO") @db.VarChar(30)
+  estado           String?   @default("NUEVO") @db.VarChar(30)
+  valor_estimado   Decimal?  @default(0) @db.Decimal(12, 2)
+  notas            String?
+  persona_id       Int?
+  usuario          Int?
+  business_id      Int?
+  fbc              String?   @db.VarChar(255)
+  fbp              String?   @db.VarChar(255)
+  created_at       DateTime? @default(now()) @db.Timestamp(6)
+  updated_at       DateTime? @default(now()) @db.Timestamp(6)
 
   @@index([business_id], map: "idx_crm_leads_business")
   @@index([estado], map: "idx_crm_leads_estado")
@@ -274,4 +274,20 @@ enum tipo_persona_enum {
   PROVEEDOR
   EMPLEADO
   LEAD
+}
+
+/// Punto de partida del saldo acumulado por negocio.
+/// Ver: finanzas_config_migration.sql (raíz del repo)
+model finanzas_config {
+  id               Int       @id @default(autoincrement())
+  business_id      Int       @unique
+  saldo_inicial    Decimal   @default(0) @db.Decimal(14, 2)
+  fecha_corte      DateTime? @db.Date
+  notas            String?
+  /// Claves de las tarjetas que el negocio decidió ocultar del panel
+  tarjetas_ocultas Json      @default("[]")
+  created_at       DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@index([business_id], map: "idx_finanzas_config_business_id")
 }
