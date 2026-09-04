@@ -43,6 +43,64 @@ const ESTADO_EVENT_NAME = {
 export const estadoToEventName = (estado) =>
     ESTADO_EVENT_NAME[String(estado || "").toUpperCase()] || "Lead";
 
+// ─── Catálogo de servicios (cursos que se pautan) ─────────────────────────────
+// Todos los eventos viajan al MISMO dataset con los mismos event_name estándar
+// (Lead, Purchase...). Lo que separa un curso de otro es content_ids/content_name:
+// en Ads Manager se crea una CONVERSIÓN PERSONALIZADA por curso filtrando por ese
+// content_ids, y cada campaña optimiza contra la suya. Así los cursos no se cruzan
+// ni en optimización ni en reportes, pero el pixel sigue acumulando señal conjunta.
+//
+// Para añadir un curso nuevo: una entrada aquí + su conversión personalizada en Meta.
+const SERVICIOS = {
+    "manipulacion-alimentos": {
+        nombre:    "Manipulación de Alimentos",
+        categoria: "Cursos",
+        valor:     Number(process.env.META_CAPI_VALOR_MANIPULACION_ALIMENTOS) || 0,
+    },
+    "auxiliar-bodega": {
+        nombre:    "Auxiliar de Bodega",
+        categoria: "Cursos",
+        valor:     Number(process.env.META_CAPI_VALOR_AUXILIAR_BODEGA) || 0,
+    },
+};
+
+// Slug por defecto para leads que llegan sin 'servicio' (landings viejas que aún
+// no envían el campo). Ponerlo vacío en .env desactiva la suposición.
+const SERVICIO_DEFAULT = process.env.META_CAPI_SERVICIO_DEFAULT ?? "manipulacion-alimentos";
+
+// Variantes de escritura que llegan de las landings o de carga manual en el CRM.
+const ALIAS_SERVICIOS = {
+    "manipulacion-de-alimentos": "manipulacion-alimentos",
+    "manipulacion-alimentos":    "manipulacion-alimentos",
+    "auxiliar-de-bodega":        "auxiliar-bodega",
+    "auxiliar-bodega":           "auxiliar-bodega",
+};
+
+/** "Auxiliar de Bodega" / "auxiliar_de_bodega" -> "auxiliar-de-bodega" */
+const slugify = (texto) =>
+    String(texto || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita acentos
+        .trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+/**
+ * Normaliza lo que venga (slug, nombre con acentos, alias) al slug del catálogo.
+ * Devuelve null si no corresponde a ningún servicio conocido: mejor no marcar el
+ * evento que marcarlo con un content_ids inventado que ninguna conversión captura.
+ * @param {string} servicio
+ * @returns {string|null}
+ */
+export const normalizarServicio = (servicio) => {
+    const slug = slugify(servicio);
+    if (!slug) return null;
+    if (SERVICIOS[slug]) return slug;
+    return ALIAS_SERVICIOS[slug] || null;
+};
+
+/** Lista de slugs válidos, para validar en los controladores. */
+export const SERVICIOS_VALIDOS = Object.keys(SERVICIOS);
+
 // ─── Helpers de normalización + hash SHA-256 ──────────────────────────────────
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
@@ -77,8 +135,9 @@ const splitName = (fullName) => {
  * Nunca lanza: si algo falla, lo registra y devuelve { ok:false }.
  *
  * @param {Object}  params
- * @param {Object}  params.lead            - Registro del lead (nombre, email, telefono, numero_documento, fbc, fbp...)
+ * @param {Object}  params.lead            - Registro del lead (nombre, email, telefono, numero_documento, fbc, fbp, servicio...)
  * @param {string}  params.eventName       - Nombre del evento en Meta (ver estadoToEventName)
+ * @param {string} [params.servicio]       - Slug del curso; si se omite se usa lead.servicio
  * @param {number} [params.eventTime]      - Unix timestamp en segundos (default: ahora)
  * @param {string} [params.eventId]        - ID para deduplicar con el Pixel del navegador
  * @param {string} [params.fbc]            - Identificador de clic (_fbc) — prioridad más alta
@@ -92,6 +151,7 @@ const splitName = (fullName) => {
 export const sendLeadEvent = async ({
     lead,
     eventName,
+    servicio,
     eventTime = Math.floor(Date.now() / 1000),
     eventId,
     fbc,
@@ -128,11 +188,29 @@ export const sendLeadEvent = async ({
             event_source: "crm",
             lead_event_source: LEAD_EVENT_SOURCE,
         };
+
+        // Curso/servicio: es lo que separa un embudo de otro dentro del mismo dataset.
+        // Las conversiones personalizadas de Ads Manager filtran por content_ids, así
+        // que este bloque es el que evita que Manipulación de Alimentos y Auxiliar de
+        // Bodega se mezclen en optimización y reportes.
+        const slug = normalizarServicio(servicio || lead.servicio || SERVICIO_DEFAULT);
+        const info = slug ? SERVICIOS[slug] : null;
+        if (info) {
+            custom_data.content_ids      = [slug];
+            custom_data.content_name     = info.nombre;
+            custom_data.content_category = info.categoria;
+            custom_data.content_type     = "product";
+        }
+
         // Valor + moneda: imprescindible para Purchase (ROAS), útil en cualquier evento.
-        const valor = Number(lead.valor_estimado);
-        if (Number.isFinite(valor) && valor > 0) {
+        // El valor_estimado del lead manda; si viene en 0 se cae al precio de lista del
+        // curso (META_CAPI_VALOR_*), para que el Purchase nunca llegue sin valor.
+        const estimado = Number(lead.valor_estimado);
+        const valor = Number.isFinite(estimado) && estimado > 0 ? estimado : (info?.valor || 0);
+        if (valor > 0) {
             custom_data.value = valor;
             custom_data.currency = CURRENCY;
+            if (eventName === "Purchase") custom_data.num_items = 1;
         }
 
         const event = {

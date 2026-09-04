@@ -458,3 +458,79 @@ export const getInventarioByUserId = async (req, res) => {
         return res.status(500).json({ message: "Error al consultar negocio específico" });
     }
 };
+
+// ==========================================
+// 9. AJUSTAR STOCK (SET DIRECTO / REINICIAR A 0)
+// ==========================================
+export const ajustarStockInventario = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { cantidad } = req.body;
+        const businessId = req.user?.bid;
+
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio" });
+
+        const nuevaCantidad = parseInt(cantidad);
+        if (isNaN(nuevaCantidad) || nuevaCantidad < 0) {
+            return res.status(400).json({ message: "La cantidad debe ser un número mayor o igual a 0" });
+        }
+
+        const producto = await prisma.inventario.findFirst({
+            where:  { id: Number(id), business_id: businessId },
+            select: { id: true, nombre: true, cantidad: true, tipo_item: true },
+        });
+        if (!producto) return res.status(404).json({ message: "Producto no encontrado" });
+        if (producto.tipo_item === 'servicio') {
+            return res.status(400).json({ message: "Los servicios no manejan stock" });
+        }
+
+        const updatedItem = await prisma.inventario.update({
+            where: { id: Number(id) },
+            data:  { cantidad: nuevaCantidad, updated_at: new Date() },
+        });
+
+        const msg = nuevaCantidad === 0
+            ? `Stock de ${producto.nombre} reiniciado a 0.`
+            : `Stock de ${producto.nombre} ajustado a ${nuevaCantidad} unidades.`;
+
+        return res.status(200).json({ message: msg, data: updatedItem });
+    } catch (error) {
+        console.error('Error ajustando stock:', error);
+        return res.status(500).json({ message: 'Error al ajustar el stock', error: error.message });
+    }
+};
+
+// ==========================================
+// 10. AJUSTAR CATEGORÍA (EDICIÓN EN LÍNEA)
+// ==========================================
+export const ajustarCategoriaInventario = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { categoria } = req.body;
+        const businessId = req.user?.bid;
+
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio" });
+
+        const nuevaCategoria = (categoria ?? '').toString().trim() || null;
+
+        const producto = await prisma.inventario.findFirst({
+            where:  { id: Number(id), business_id: businessId },
+            select: { id: true, nombre: true },
+        });
+        if (!producto) return res.status(404).json({ message: "Ítem no encontrado" });
+
+        const updatedItem = await prisma.inventario.update({
+            where: { id: Number(id) },
+            data:  { categoria: nuevaCategoria, updated_at: new Date() },
+        });
+
+        const msg = nuevaCategoria
+            ? `Categoría de ${producto.nombre} actualizada a "${nuevaCategoria}".`
+            : `Categoría de ${producto.nombre} eliminada.`;
+
+        return res.status(200).json({ message: msg, data: updatedItem });
+    } catch (error) {
+        console.error('Error ajustando categoría:', error);
+        return res.status(500).json({ message: 'Error al actualizar la categoría', error: error.message });
+    }
+};

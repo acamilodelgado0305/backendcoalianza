@@ -1,5 +1,5 @@
 import prisma from '../prisma.js';
-import { sendLeadEvent, estadoToEventName, getClientMeta } from '../services/metaConversions.js';
+import { sendLeadEvent, estadoToEventName, getClientMeta, normalizarServicio } from '../services/metaConversions.js';
 import { buildFiltroFechas } from '../utils/dateRange.js';
 
 // Estados y orígenes válidos (mismos valores que usa el frontend)
@@ -13,7 +13,7 @@ export const createLead = async (req, res) => {
     try {
         const {
             nombre, empresa, tipo_documento, numero_documento, email, telefono,
-            origen, estado, valor_estimado, notas, persona_id,
+            origen, estado, valor_estimado, notas, persona_id, servicio,
             fbc, fbp, event_id, lead_id,
         } = req.body;
 
@@ -25,6 +25,9 @@ export const createLead = async (req, res) => {
         if (!nombre)     return res.status(400).json({ message: "El nombre es obligatorio" });
 
         const estadoFinal = ESTADOS_VALIDOS.includes(estado) ? estado : 'NUEVO';
+        // Slug del curso por el que entró (marca los eventos de Meta). Si no se
+        // reconoce se guarda null antes que un valor que ninguna campaña captura.
+        const servicioFinal = normalizarServicio(servicio);
 
         const lead = await prisma.crm_leads.create({
             data: {
@@ -39,6 +42,7 @@ export const createLead = async (req, res) => {
                 valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
                 notas:            notas || null,
                 persona_id:       persona_id ? Number(persona_id) : null,
+                servicio:         servicioFinal,
                 fbc:              fbc || null,
                 fbp:              fbp || null,
                 usuario:          usuarioId,
@@ -50,6 +54,7 @@ export const createLead = async (req, res) => {
         await sendLeadEvent({
             lead,
             eventName: estadoToEventName(estadoFinal),
+            servicio:  servicioFinal,
             eventId:   event_id,
             leadId:    lead_id,
             ...getClientMeta(req),
@@ -70,13 +75,17 @@ export const createLeadPublico = async (req, res) => {
     try {
         const {
             business_id, nombre, empresa, tipo_documento, numero_documento,
-            email, telefono, origen, valor_estimado, notas,
+            email, telefono, origen, valor_estimado, notas, servicio,
             fbc, fbp, event_id, lead_id,
         } = req.body;
 
         const businessId = Number(business_id);
         if (!businessId) return res.status(400).json({ message: "Falta business_id" });
         if (!nombre)     return res.status(400).json({ message: "El nombre es obligatorio" });
+
+        // Cada landing manda su propio slug ('manipulacion-alimentos', 'auxiliar-bodega').
+        // Es lo que después separa las conversiones personalizadas en Ads Manager.
+        const servicioFinal = normalizarServicio(servicio);
 
         const lead = await prisma.crm_leads.create({
             data: {
@@ -90,6 +99,7 @@ export const createLeadPublico = async (req, res) => {
                 estado:           'NUEVO', // todo lead público entra como nuevo
                 valor_estimado:   valor_estimado != null ? Number(valor_estimado) : 0,
                 notas:            notas || null,
+                servicio:         servicioFinal,
                 fbc:              fbc || null,
                 fbp:              fbp || null,
                 usuario:          null,    // no hay usuario autenticado
@@ -102,6 +112,7 @@ export const createLeadPublico = async (req, res) => {
         await sendLeadEvent({
             lead,
             eventName: estadoToEventName('NUEVO'), // 'Lead'
+            servicio:  servicioFinal,
             eventId:   event_id,
             leadId:    lead_id,
             fbc,
@@ -126,7 +137,7 @@ export const updateLeadPublico = async (req, res) => {
         const { id } = req.params;
         const {
             business_id, nombre, empresa, tipo_documento, numero_documento,
-            email, telefono, origen, estado, valor_estimado, notas,
+            email, telefono, origen, estado, valor_estimado, notas, servicio,
         } = req.body;
 
         const businessId = Number(business_id);
@@ -159,6 +170,7 @@ export const updateLeadPublico = async (req, res) => {
                 ...(estado           !== undefined && { estado }),
                 ...(valor_estimado   !== undefined && { valor_estimado: Number(valor_estimado) || 0 }),
                 ...(notas            !== undefined && { notas: notas || null }),
+                ...(servicio         !== undefined && { servicio: normalizarServicio(servicio) }),
                 updated_at: new Date(),
             },
         });
@@ -292,7 +304,7 @@ export const updateLead = async (req, res) => {
         const businessId = req.user?.bid;
         const {
             nombre, empresa, tipo_documento, numero_documento, email, telefono,
-            origen, estado, valor_estimado, notas, persona_id,
+            origen, estado, valor_estimado, notas, persona_id, servicio,
         } = req.body;
 
         const existe = await prisma.crm_leads.findFirst({
@@ -322,6 +334,7 @@ export const updateLead = async (req, res) => {
                 ...(valor_estimado !== undefined && { valor_estimado: Number(valor_estimado) || 0 }),
                 ...(notas          !== undefined && { notas: notas || null }),
                 ...(persona_id     !== undefined && { persona_id: persona_id ? Number(persona_id) : null }),
+                ...(servicio       !== undefined && { servicio: normalizarServicio(servicio) }),
                 updated_at: new Date(),
             },
         });
