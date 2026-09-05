@@ -3,6 +3,18 @@ import { Prisma } from '@prisma/client';
 import { uploadProductImageToGCS, deleteProductImageFromGCS } from '../services/gcsProductImages.js';
 import { v4 as uuidv4 } from 'uuid';
 
+// Plantillas de documentos que se pueden enviar por correo al vender un ítem.
+// El valor viaja como texto porque el form llega en multipart (FormData), donde
+// todo es string. Cualquier valor desconocido cae a 'alimentos', que es lo que
+// se enviaba antes de que existiera esta columna.
+const PLANTILLAS_CORREO = ['alimentos', 'acreditacion'];
+
+const normalizarPlantilla = (valor, sendMail) => {
+    const activo = sendMail === 'true' || sendMail === true;
+    if (!activo) return null;
+    return PLANTILLAS_CORREO.includes(valor) ? valor : 'alimentos';
+};
+
 // ==========================================
 // 1. CREAR ÍTEM (CREATE)
 // ==========================================
@@ -14,6 +26,7 @@ export const createInventarioItem = async (req, res) => {
             unidades_por_caja, stock_inicial_empaques,
             codigo_barras, tipo_programa, tipo_item,
             sku, stock_minimo, categoria, send_mail,
+            plantilla_correo, intensidad_horaria,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -72,6 +85,11 @@ export const createInventarioItem = async (req, res) => {
                 categoria:              categoria || null,
                 impuesto:               parseFloat(req.body.impuesto) || 0,
                 send_mail:              send_mail === 'true' || send_mail === true,
+                // Qué documentos se le mandan al cliente cuando compra este ítem:
+                // 'alimentos' = certificado + carnet, 'acreditacion' = diploma +
+                // certificado. Solo tiene sentido si send_mail está activo.
+                plantilla_correo:       normalizarPlantilla(plantilla_correo, send_mail),
+                intensidad_horaria:     intensidad_horaria || null,
             },
         });
 
@@ -137,6 +155,7 @@ export const updateInventarioItem = async (req, res) => {
             unidades_por_caja, stock_inicial_empaques,
             codigo_barras, tipo_programa, tipo_item,
             sku, stock_minimo, categoria, send_mail,
+            plantilla_correo, intensidad_horaria,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -211,6 +230,12 @@ export const updateInventarioItem = async (req, res) => {
                 send_mail:              send_mail !== undefined
                                             ? (send_mail === 'true' || send_mail === true)
                                             : (productoActual.send_mail ?? false),
+                plantilla_correo:       plantilla_correo !== undefined
+                                            ? normalizarPlantilla(plantilla_correo, send_mail ?? productoActual.send_mail)
+                                            : productoActual.plantilla_correo,
+                intensidad_horaria:     intensidad_horaria !== undefined
+                                            ? (intensidad_horaria || null)
+                                            : productoActual.intensidad_horaria,
                 updated_at:             new Date(),
             },
         });
