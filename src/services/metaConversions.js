@@ -23,25 +23,36 @@ if (ENABLED && !ACCESS_TOKEN) {
 }
 
 // ─── Mapa: estado del CRM -> event_name en Meta ───────────────────────────────
-// NUEVO usa 'Lead' para deduplicar con el Pixel del navegador (mismo event_name + event_id).
-// GANADO usa 'Purchase' (evento estándar de conversión): es la venta cerrada, la que
-// Meta optimiza por ROAS. Se envía con value + currency (ver custom_data en sendLeadEvent).
+// Solo se reportan las DOS puntas del embudo. El CRM mandaba además un evento por
+// cada etapa intermedia (Contacted, Qualified, Proposal, Disqualified) y eso
+// llenaba el dataset de ruido que no servía ni para optimizar ni para leer los
+// reportes; se quitaron en Sep 2026.
+//
+//   · NUEVO  -> 'Lead'     — entrada al embudo. Se conserva porque es el evento por
+//     el que optimizan las campañas y porque deduplica con el Pixel del navegador
+//     (mismo event_name + event_id), que es lo que le da su alto EMQ.
+//   · GANADO -> 'Purchase' — la venta cerrada, la que Meta mide por ROAS. Va con
+//     value + currency (ver custom_data abajo).
+//
+// Toda etapa que NO esté en este mapa no se reporta. Para reactivar alguna, se
+// agrega aquí y ya: el resto del flujo no distingue estados.
 const ESTADO_EVENT_NAME = {
-    NUEVO:      "Lead",
-    CONTACTADO: "Contacted",
-    CALIFICADO: "Qualified",
-    PROPUESTA:  "Proposal",
-    GANADO:     "Purchase",
-    PERDIDO:    "Disqualified",
+    NUEVO:  "Lead",
+    GANADO: "Purchase",
 };
 
 /**
  * Traduce un estado del embudo del CRM al nombre de evento que espera Meta.
+ * Devuelve null para las etapas que NO se reportan, y con null `sendLeadEvent`
+ * no envía nada.
+ *
+ * OJO: antes caía a "Lead" ante un estado desconocido. Ya no: un estado que no
+ * esté en el mapa se descarta, para que no se cuele un Lead fantasma.
  * @param {string} estado
- * @returns {string}
+ * @returns {string|null}
  */
 export const estadoToEventName = (estado) =>
-    ESTADO_EVENT_NAME[String(estado || "").toUpperCase()] || "Lead";
+    ESTADO_EVENT_NAME[String(estado || "").toUpperCase()] || null;
 
 // ─── Catálogo de servicios (cursos que se pautan) ─────────────────────────────
 // Todos los eventos viajan al MISMO dataset con los mismos event_name estándar
@@ -65,8 +76,14 @@ const SERVICIOS = {
 };
 
 // Slug por defecto para leads que llegan sin 'servicio' (landings viejas que aún
-// no envían el campo). Ponerlo vacío en .env desactiva la suposición.
-const SERVICIO_DEFAULT = process.env.META_CAPI_SERVICIO_DEFAULT ?? "manipulacion-alimentos";
+// no envían el campo).
+//
+// Por defecto NO hay suposición: adivinar el curso ensuciaba los reportes. Con el
+// valor "manipulacion-alimentos" que había antes, los cientos de leads que llegan
+// sin `servicio` viajaban a Meta etiquetados como ese curso y le inflaban la
+// conversión personalizada. Sin suposición, el evento viaja sin content_ids: cuenta
+// en el evento estándar y en ninguna conversión personalizada, que es lo honesto.
+const SERVICIO_DEFAULT = process.env.META_CAPI_SERVICIO_DEFAULT || "";
 
 // Variantes de escritura que llegan de las landings o de carga manual en el CRM.
 const ALIAS_SERVICIOS = {

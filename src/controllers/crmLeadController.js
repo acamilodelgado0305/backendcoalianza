@@ -50,7 +50,8 @@ export const createLead = async (req, res) => {
             },
         });
 
-        // Meta Conversions API: notificar la entrada del lead al embudo (no bloquea el flujo)
+        // Meta Conversions API: solo se reportan NUEVO (Lead) y GANADO (Purchase).
+        // Las etapas intermedias devuelven null en estadoToEventName y no se envían.
         await sendLeadEvent({
             lead,
             eventName: estadoToEventName(estadoFinal),
@@ -107,7 +108,7 @@ export const createLeadPublico = async (req, res) => {
             },
         });
 
-        // Meta Conversions API: evento 'Lead' server-side (la etapa inicial del embudo).
+        // Meta Conversions API: evento 'Lead' server-side (la entrada al embudo).
         // event_id se comparte con el Pixel del navegador para deduplicar.
         await sendLeadEvent({
             lead,
@@ -175,7 +176,8 @@ export const updateLeadPublico = async (req, res) => {
             },
         });
 
-        // Meta Conversions API: enviar evento solo si el estado cambió a uno nuevo.
+        // Meta Conversions API: solo cuando el estado cambia, y de esos solo NUEVO
+        // y GANADO llegan a mandarse (los demás devuelven null y se descartan).
         if (estado !== undefined && estado !== existe.estado) {
             await sendLeadEvent({
                 lead, // trae fbc/fbp guardados en la creación
@@ -339,7 +341,8 @@ export const updateLead = async (req, res) => {
             },
         });
 
-        // Meta Conversions API: enviar evento solo si el estado cambió a uno nuevo.
+        // Meta Conversions API: solo cuando el estado cambia, y de esos solo NUEVO
+        // y GANADO llegan a mandarse (los demás devuelven null y se descartan).
         if (estado !== undefined && estado !== existe.estado) {
             await sendLeadEvent({
                 lead, // trae fbc/fbp guardados en la creación
