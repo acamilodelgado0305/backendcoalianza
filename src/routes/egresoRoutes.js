@@ -9,13 +9,24 @@ import {
     getEgresosByUsuario,
     getEgresoById,
     updateEgreso,
-    deleteEgreso
+    deleteEgreso,
+    getCategoriasEgreso,
+    createCategoriaEgreso,
+    updateCategoriaEgreso,
+    deleteCategoriaEgreso,
 } from '../controllers/egresoController.js';
 
 const router = express.Router();
 
 // Todas las rutas requieren autenticación
 router.use(authMiddleware);
+
+// Categorías = «etiquetas» en la interfaz (antes de '/:id' para que
+// "categorias" no se tome como un id)
+router.get('/categorias', getCategoriasEgreso);
+router.post('/categorias', createCategoriaEgreso);
+router.put('/categorias/:id', updateCategoriaEgreso);
+router.delete('/categorias/:id', deleteCategoriaEgreso);
 
 // Endpoints CRUD
 router.post('/', createEgreso);           // Crear
