@@ -320,7 +320,7 @@ enum tipo_persona_enum {
   CLIENTE
   PROVEEDOR
   EMPLEADO
-  LEAD
+  COLABORADOR
 }
 
 /// Punto de partida del saldo acumulado por negocio.
