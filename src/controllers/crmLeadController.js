@@ -216,6 +216,7 @@ export const getLeads = async (req, res) => {
                     { empresa:  { contains: q, mode: 'insensitive' } },
                     { email:    { contains: q, mode: 'insensitive' } },
                     { telefono: { contains: q, mode: 'insensitive' } },
+                    { numero_documento: { contains: q, mode: 'insensitive' } },
                 ],
             }),
         };
