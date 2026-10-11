@@ -16,6 +16,7 @@ import documentoVentaRoutes from './routes/documentoVentaRoutes.js';
 import { cuentasPorPagarRouter, cuentasPorCobrarRouter } from './routes/cuentasRoutes.js';
 import crmLeadRoutes from './routes/crmLeadRoutes.js';
 import finanzasRoutes from './routes/finanzasRoutes.js';
+import mercadoPagoRoutes from './routes/mercadoPagoRoutes.js';
 
 dotenv.config();
 
@@ -35,6 +36,7 @@ app.use(cors({
     'https://rapictrl.com',
     'https://app.rapictrl.com',
     'https://www.certitecol.com',
+    'https://certitecol.com',                // apex (link de pago de Mercado Pago)
     'https://www.validaciondebachillerato.com.co',
     'https://www.alianzacapacitarte.com',    // Landing Alianza Capacitarte — dominio principal (verificación)
     'https://alianzacapacitarte.com',        // apex (redirige a www, por si acaso)
@@ -67,6 +69,7 @@ app.use('/api/cuentas-por-pagar', cuentasPorPagarRouter);
 app.use('/api/cuentas-por-cobrar', cuentasPorCobrarRouter);
 app.use('/api/crm/leads', crmLeadRoutes);
 app.use('/api/finanzas', finanzasRoutes);
+app.use('/api/pagos/mp', mercadoPagoRoutes);
 
 // Conectar a la base de datos
 
