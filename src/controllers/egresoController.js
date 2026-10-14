@@ -1,6 +1,7 @@
 import prisma from '../prisma.js';
 import { v4 as uuidv4 } from 'uuid';
 import { buildFiltroFechas } from '../utils/dateRange.js';
+import { resolverEtiqueta, tipoEtiqueta } from '../utils/etiquetas.js';
 import { uploadComprobanteToGCS, deleteComprobanteFromGCS } from '../services/gcsComprobantes.js';
 
 // Prisma devuelve el campo `_id` de la DB como `legacyId` (por el @map).
@@ -15,7 +16,6 @@ const normalizeEgreso = ({ categoria, ...e }) => ({
 
 const INCLUDE_CATEGORIA = { categoria: { select: { nombre: true, color: true } } };
 
-const errorHttp = (status, message) => Object.assign(new Error(message), { status });
 
 // Egreso del negocio activo por id numérico o por legacyId (UUID).
 const buscarEgreso = (id, businessId) =>
@@ -29,18 +29,8 @@ const buscarEgreso = (id, businessId) =>
         },
     });
 
-// Solo se aceptan categorías del negocio activo. null / '' quita la categoría.
-const resolverCategoria = async (valor, businessId) => {
-    if (valor === null || valor === undefined || valor === '') return null;
-    const id = Number(valor);
-    if (!Number.isInteger(id)) throw errorHttp(400, 'Etiqueta inválida');
-    const categoria = await prisma.egreso_categorias.findFirst({
-        where:  { id, business_id: businessId },
-        select: { id: true },
-    });
-    if (!categoria) throw errorHttp(400, 'La etiqueta no existe en este negocio');
-    return id;
-};
+// Solo se aceptan etiquetas de GASTO del negocio activo. null / '' quita la etiqueta.
+const resolverCategoria = (valor, businessId) => resolverEtiqueta(valor, businessId, 'gasto');
 
 // ==========================================
 // 1. CREAR EGRESO (CREATE)
@@ -260,7 +250,7 @@ export const quitarComprobanteEgreso = async (req, res) => {
 // Se crean, editan y eliminan desde el formulario del gasto.
 const NOMBRE_CATEGORIA_MAX = 80;
 const COLOR_ETIQUETA_DEFAULT = '#475569';
-const SELECT_ETIQUETA = { id: true, nombre: true, color: true };
+const SELECT_ETIQUETA = { id: true, nombre: true, color: true, tipo: true };
 
 // '#RRGGBB' en minúsculas, o null si no es un color válido.
 const normalizarColor = (valor) =>
@@ -276,11 +266,13 @@ const validarNombre = (valor) => {
     return { nombre };
 };
 
-// Etiqueta del negocio con ese nombre (sin distinguir mayúsculas), opcionalmente excluyendo un id.
-const buscarPorNombre = (businessId, nombre, excluirId = null) =>
+// Etiqueta del negocio y del tipo con ese nombre (sin distinguir mayúsculas),
+// opcionalmente excluyendo un id. "Ventas" de gasto y de ingreso no chocan.
+const buscarPorNombre = (businessId, nombre, excluirId = null, tipo = 'gasto') =>
     prisma.egreso_categorias.findFirst({
         where: {
             business_id: businessId,
+            tipo,
             nombre: { equals: nombre, mode: 'insensitive' },
             ...(excluirId != null && { id: { not: excluirId } }),
         },
@@ -288,15 +280,16 @@ const buscarPorNombre = (businessId, nombre, excluirId = null) =>
     });
 
 const etiquetaDelNegocio = (id, businessId) =>
-    prisma.egreso_categorias.findFirst({ where: { id, business_id: businessId }, select: { id: true } });
+    prisma.egreso_categorias.findFirst({ where: { id, business_id: businessId }, select: { id: true, tipo: true } });
 
 export const getCategoriasEgreso = async (req, res) => {
     try {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
+        // ?tipo=ingreso trae las de ingresos; sin tipo (pantallas viejas), las de gastos.
         const categorias = await prisma.egreso_categorias.findMany({
-            where:   { business_id: businessId },
+            where:   { business_id: businessId, tipo: tipoEtiqueta(req.query?.tipo) },
             select:  SELECT_ETIQUETA,
             orderBy: { nombre: 'asc' },
         });
@@ -316,21 +309,22 @@ export const createCategoriaEgreso = async (req, res) => {
         const { nombre, error } = validarNombre(req.body?.nombre);
         if (error) return res.status(400).json({ message: error });
         const color = normalizarColor(req.body?.color) || COLOR_ETIQUETA_DEFAULT;
+        const tipo = tipoEtiqueta(req.body?.tipo);
 
-        // No se duplican dentro del negocio (sin distinguir mayúsculas): si ya
-        // existe, se devuelve esa para que el formulario simplemente la elija.
-        const existente = await buscarPorNombre(businessId, nombre);
+        // No se duplican dentro del negocio y del tipo (sin distinguir mayúsculas):
+        // si ya existe, se devuelve esa para que el formulario simplemente la elija.
+        const existente = await buscarPorNombre(businessId, nombre, null, tipo);
         if (existente) return res.status(200).json(existente);
 
         try {
             const categoria = await prisma.egreso_categorias.create({
-                data:   { business_id: businessId, nombre, color },
+                data:   { business_id: businessId, nombre, color, tipo },
                 select: SELECT_ETIQUETA,
             });
             return res.status(201).json(categoria);
         } catch (err) {
             // Otra petición la creó al mismo tiempo (índice único): se devuelve esa.
-            const creada = await buscarPorNombre(businessId, nombre);
+            const creada = await buscarPorNombre(businessId, nombre, null, tipo);
             if (creada) return res.status(200).json(creada);
             throw err;
         }
@@ -347,7 +341,8 @@ export const updateCategoriaEgreso = async (req, res) => {
 
         const id = Number(req.params.id);
         if (!Number.isInteger(id)) return res.status(400).json({ message: "Etiqueta inválida" });
-        if (!(await etiquetaDelNegocio(id, businessId))) {
+        const actual = await etiquetaDelNegocio(id, businessId);
+        if (!actual) {
             return res.status(404).json({ message: "Etiqueta no encontrada" });
         }
 
@@ -355,7 +350,7 @@ export const updateCategoriaEgreso = async (req, res) => {
         if (req.body?.nombre !== undefined) {
             const { nombre, error } = validarNombre(req.body.nombre);
             if (error) return res.status(400).json({ message: error });
-            if (await buscarPorNombre(businessId, nombre, id)) {
+            if (await buscarPorNombre(businessId, nombre, id, actual.tipo)) {
                 return res.status(409).json({ message: "Ya existe una etiqueta con ese nombre" });
             }
             data.nombre = nombre;
@@ -391,11 +386,21 @@ export const deleteCategoriaEgreso = async (req, res) => {
             return res.status(404).json({ message: "Etiqueta no encontrada" });
         }
 
-        // La FK egresos.categoria_id es ON DELETE SET NULL: sus gastos quedan sin etiqueta.
-        const gastosSinEtiqueta = await prisma.egresos.count({ where: { categoria_id: id, business_id: businessId } });
+        // Las FK egresos.categoria_id e ingresos.categoria_id son ON DELETE SET
+        // NULL: sus movimientos quedan sin etiqueta.
+        const [gastosSinEtiqueta, ingresosSinEtiqueta] = await Promise.all([
+            prisma.egresos.count({ where: { categoria_id: id, business_id: businessId } }),
+            prisma.ingresos.count({ where: { categoria_id: id, business_id: businessId } }),
+        ]);
         await prisma.egreso_categorias.delete({ where: { id } });
 
-        return res.status(200).json({ message: "Etiqueta eliminada", id, gastos_sin_etiqueta: gastosSinEtiqueta });
+        return res.status(200).json({
+            message: "Etiqueta eliminada",
+            id,
+            gastos_sin_etiqueta: gastosSinEtiqueta,
+            ingresos_sin_etiqueta: ingresosSinEtiqueta,
+            movimientos_sin_etiqueta: gastosSinEtiqueta + ingresosSinEtiqueta,
+        });
     } catch (error) {
         console.error("Error eliminando categoría de egreso:", error);
         return res.status(500).json({ message: "Error al eliminar la etiqueta" });

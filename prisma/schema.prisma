@@ -152,8 +152,10 @@ model egreso_categorias {
   business_id Int
   nombre      String    @db.VarChar(80)
   color       String?   @db.VarChar(7) // #rrggbb; en la interfaz son «etiquetas» de color
+  tipo        String    @default("gasto") @db.VarChar(10) // 'gasto' | 'ingreso': dos listas separadas
   created_at  DateTime? @default(now()) @db.Timestamptz(6)
   egresos     egresos[]
+  ingresos    ingresos[]
 }
 
 model ingreso_items {
@@ -193,10 +195,13 @@ model ingresos {
   persona_id        Int?
   pedido_id         Int?
   descripcion       String?
+  categoria_id      Int? // etiqueta de color del ingreso (egreso_categorias con tipo 'ingreso')
   pedidos           pedidos?  @relation(fields: [pedido_id], references: [id], onUpdate: NoAction)
   personas          personas? @relation(fields: [persona_id], references: [id], onUpdate: NoAction)
+  categoria         egreso_categorias? @relation(fields: [categoria_id], references: [id], onDelete: SetNull)
 
   @@index([legacyId], map: "idx_ingresos_id_text")
+  @@index([categoria_id], map: "idx_ingresos_categoria")
   @@index([numeroDeDocumento, payment_status], map: "idx_cedula_status")
   @@index([pedido_id], map: "idx_ingresos_pedido_id")
   @@index([persona_id], map: "idx_ingresos_persona_id")
@@ -360,6 +365,8 @@ model finanzas_config {
   notas            String?
   /// Claves de las tarjetas que el negocio decidió ocultar del panel
   tarjetas_ocultas Json      @default("[]")
+  /// Movimientos abre siempre el formulario completo en vez del registro rápido
+  registro_completo Boolean  @default(false)
   created_at       DateTime? @default(now()) @db.Timestamptz(6)
   updated_at       DateTime? @default(now()) @db.Timestamptz(6)
 

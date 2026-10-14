@@ -36,9 +36,12 @@ const sanearOcultas = (valor) => {
 };
 
 // La configuración es opcional: un negocio sin fila se comporta como saldo
-// inicial 0, sin fecha de corte (todo el histórico cuenta) y con todas las
-// tarjetas visibles.
-const CONFIG_VACIA = { saldo_inicial: 0, fecha_corte: null, notas: null, tarjetas_ocultas: [] };
+// inicial 0, sin fecha de corte (todo el histórico cuenta), con todas las
+// tarjetas visibles y con el registro rápido en Movimientos.
+const CONFIG_VACIA = { saldo_inicial: 0, fecha_corte: null, notas: null, tarjetas_ocultas: [], registro_completo: false };
+
+// Solo un administrador decide cómo registra todo su negocio.
+const ROLES_ADMIN = ['admin', 'superadmin'];
 
 const normalizeConfig = (row) =>
     row
@@ -47,6 +50,7 @@ const normalizeConfig = (row) =>
               fecha_corte:      row.fecha_corte ? row.fecha_corte.toISOString().slice(0, 10) : null,
               notas:            row.notas || null,
               tarjetas_ocultas: sanearOcultas(row.tarjetas_ocultas),
+              registro_completo: row.registro_completo === true,
           }
         : { ...CONFIG_VACIA };
 
@@ -106,14 +110,14 @@ export const getFinanzasConfig = async (req, res) => {
 };
 
 // ==========================================
-// PUT /api/finanzas/config   { saldo_inicial, fecha_corte, notas }
+// PUT /api/finanzas/config   { saldo_inicial, fecha_corte, notas, tarjetas_ocultas, registro_completo }
 // ==========================================
 export const updateFinanzasConfig = async (req, res) => {
     try {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: 'No se pudo determinar el negocio activo' });
 
-        const { saldo_inicial, fecha_corte, notas, tarjetas_ocultas } = req.body;
+        const { saldo_inicial, fecha_corte, notas, tarjetas_ocultas, registro_completo } = req.body;
 
         // Actualización parcial: solo se toca lo que venga en el body, para que
         // guardar las tarjetas visibles no borre el saldo inicial ni al revés.
@@ -150,6 +154,18 @@ export const updateFinanzasConfig = async (req, res) => {
             data.tarjetas_ocultas = sanearOcultas(tarjetas_ocultas);
         }
 
+        // "Registrar siempre con el formulario completo" vale para todo el
+        // negocio, así que solo lo cambia un administrador.
+        if (registro_completo !== undefined) {
+            if (!ROLES_ADMIN.includes(req.user?.role)) {
+                return res.status(403).json({ message: 'Solo un administrador puede cambiar cómo se registran los movimientos' });
+            }
+            if (typeof registro_completo !== 'boolean') {
+                return res.status(400).json({ message: 'registro_completo debe ser verdadero o falso' });
+            }
+            data.registro_completo = registro_completo;
+        }
+
         const row = await prisma.finanzas_config.upsert({
             where:  { business_id: businessId },
             update: data,
@@ -160,6 +176,7 @@ export const updateFinanzasConfig = async (req, res) => {
                 fecha_corte:      data.fecha_corte ?? null,
                 notas:            data.notas ?? null,
                 tarjetas_ocultas: data.tarjetas_ocultas ?? [],
+                registro_completo: data.registro_completo ?? false,
             },
         });
 
@@ -210,6 +227,8 @@ export const getSaldo = async (req, res) => {
             // Viaja aquí para que el panel sepa qué tarjetas pintar sin tener
             // que pedir /config aparte en cada carga.
             tarjetas_ocultas:    config.tarjetas_ocultas,
+            // Cómo abre Movimientos el registro (rápido o formulario completo).
+            registro_completo:   config.registro_completo,
             saldo_anterior:      saldoAnterior,
             ingresos_periodo:    periodo.ingresos,
             egresos_periodo:     periodo.egresos,

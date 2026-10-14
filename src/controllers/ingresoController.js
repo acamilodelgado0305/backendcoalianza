@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { uploadReceiptToGCS } from '../services/gcsPaymentReceipts.js';
 import { uploadComprobanteToGCS, deleteComprobanteFromGCS } from '../services/gcsComprobantes.js';
 import { parseRangoInicio, parseRangoFin } from '../utils/dateRange.js';
+import { resolverEtiqueta } from '../utils/etiquetas.js';
 
 // Ingreso del negocio activo por id numérico o por legacyId (UUID).
 const buscarIngreso = (id, businessId) =>
@@ -43,7 +44,7 @@ export const createIngreso = async (req, res) => {
             customer_email,
             nombre, apellido, numeroDeDocumento,
             tipoDocumento, tipo_documento, tipoDeDocumento,
-            tipo, fecha,
+            tipo, fecha, categoria_id,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -54,6 +55,8 @@ export const createIngreso = async (req, res) => {
         if (!cuenta)     return res.status(400).json({ message: "La cuenta de destino es obligatoria" });
 
         const createdAt = fechaDelIngreso(fecha);
+        // Etiqueta de color (solo de las de ingresos del negocio).
+        const categoriaId = await resolverEtiqueta(categoria_id, businessId, 'ingreso');
 
         let personaData = null;
         if (persona_id) {
@@ -148,6 +151,9 @@ export const createIngreso = async (req, res) => {
                     v:                '0',
                     ...(persona_id && {
                         personas: { connect: { id: persona_id } },
+                    }),
+                    ...(categoriaId && {
+                        categoria: { connect: { id: categoriaId } },
                     }),
                 },
             });
@@ -301,9 +307,12 @@ export const getIngresosByUsuario = async (req, res) => {
                     COALESCE(per.numero_documento, i."numeroDeDocumento") AS cliente_documento,
                     COALESCE(per.tipo_documento,   i."tipoDocumento")     AS cliente_tipo_doc,
                     per.celular AS cliente_celular,
+                    cat.nombre AS categoria_nombre,
+                    cat.color  AS categoria_color,
                     COALESCE(agg.items_detalle, '[]') AS items_detalle
                 FROM "public"."ingresos" i
                 LEFT JOIN "public"."personas" per ON per.id = i.persona_id
+                LEFT JOIN "public"."egreso_categorias" cat ON cat.id = i.categoria_id
                 LEFT JOIN (
                     SELECT
                         ii.ingreso_id,
@@ -501,7 +510,7 @@ export const updateIngreso = async (req, res) => {
         const {
             persona_id, items, descripcion, valor, cuenta, customer_email,
             nombre, apellido, numeroDeDocumento, tipoDocumento, tipo_documento, tipoDeDocumento, tipo,
-            fecha,
+            fecha, categoria_id,
         } = req.body;
 
         const ingreso = await prisma.ingresos.findFirst({
@@ -520,6 +529,11 @@ export const updateIngreso = async (req, res) => {
         const nuevaFecha = (fecha === undefined || fecha === null || fecha === '') ? null : fechaDelIngreso(fecha);
         const nuevoVencimiento = nuevaFecha ? new Date(nuevaFecha) : null;
         if (nuevoVencimiento) nuevoVencimiento.setFullYear(nuevoVencimiento.getFullYear() + 1);
+
+        // Etiqueta: sin el campo se conserva; con null se quita.
+        const categoriaNueva = categoria_id !== undefined
+            ? await resolverEtiqueta(categoria_id, businessId, 'ingreso')
+            : undefined;
 
         let personaData = null;
         if (persona_id) {
@@ -587,6 +601,7 @@ export const updateIngreso = async (req, res) => {
                     customer_email:   personaData?.email || customer_email || ingreso.customer_email,
                     persona_id:       persona_id ?? ingreso.persona_id,
                     ...(nuevaFecha && { createdAt: nuevaFecha, fechaVencimiento: nuevoVencimiento }),
+                    ...(categoriaNueva !== undefined && { categoria_id: categoriaNueva }),
                     updatedAt:        new Date(),
                 },
             });
