@@ -17,6 +17,22 @@ const buscarIngreso = (id, businessId) =>
         },
     });
 
+// Fecha de un ingreso (la columna es createdAt: los ingresos no tienen `fecha`).
+// Sin fecha → ahora. Se acepta una anterior para anotar lo de ayer desde el
+// celular, como ya permiten los gastos; nunca una futura (5 min de margen por
+// relojes desfasados entre el celular y el servidor).
+const fechaDelIngreso = (fecha) => {
+    if (fecha === undefined || fecha === null || fecha === '') return new Date();
+    const d = new Date(fecha);
+    if (Number.isNaN(d.getTime())) {
+        throw Object.assign(new Error('Fecha inválida'), { status: 400 });
+    }
+    if (d.getTime() > Date.now() + 5 * 60 * 1000) {
+        throw Object.assign(new Error('La fecha del ingreso no puede ser futura'), { status: 400 });
+    }
+    return d;
+};
+
 // ==========================================
 // 1. CREAR INGRESO (Privado / Admin)
 // ==========================================
@@ -27,7 +43,7 @@ export const createIngreso = async (req, res) => {
             customer_email,
             nombre, apellido, numeroDeDocumento,
             tipoDocumento, tipo_documento, tipoDeDocumento,
-            tipo,
+            tipo, fecha,
         } = req.body;
 
         const usuarioId  = req.user?.id;
@@ -36,6 +52,8 @@ export const createIngreso = async (req, res) => {
         if (!usuarioId)  return res.status(401).json({ message: "Usuario no autenticado" });
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
         if (!cuenta)     return res.status(400).json({ message: "La cuenta de destino es obligatoria" });
+
+        const createdAt = fechaDelIngreso(fecha);
 
         let personaData = null;
         if (persona_id) {
@@ -80,7 +98,6 @@ export const createIngreso = async (req, res) => {
         const descripcionFinal = descripcion || (Array.isArray(tipo) ? tipo.join(', ') : tipo) || 'Venta';
 
         const legacyId         = uuidv4();
-        const createdAt        = new Date();
         const fechaVencimiento = new Date(createdAt);
         fechaVencimiento.setFullYear(fechaVencimiento.getFullYear() + 1);
 
@@ -127,7 +144,7 @@ export const createIngreso = async (req, res) => {
                     usuario:          usuarioId,
                     business_id:      businessId,
                     createdAt,
-                    updatedAt:        createdAt,
+                    updatedAt:        new Date(),
                     v:                '0',
                     ...(persona_id && {
                         personas: { connect: { id: persona_id } },
@@ -165,6 +182,7 @@ export const createIngreso = async (req, res) => {
             data: { _id: legacyId, id: ingreso.id, total: totalValor },
         });
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         console.error("Error al crear ingreso:", error);
         return res.status(500).json({ message: "Error interno al crear el ingreso", error: error.message });
     }
@@ -483,6 +501,7 @@ export const updateIngreso = async (req, res) => {
         const {
             persona_id, items, descripcion, valor, cuenta, customer_email,
             nombre, apellido, numeroDeDocumento, tipoDocumento, tipo_documento, tipoDeDocumento, tipo,
+            fecha,
         } = req.body;
 
         const ingreso = await prisma.ingresos.findFirst({
@@ -495,6 +514,12 @@ export const updateIngreso = async (req, res) => {
             },
         });
         if (!ingreso) return res.status(404).json({ message: "Ingreso no encontrado" });
+
+        // Cambio de fecha (solo si viene). El vencimiento del certificado se
+        // cuenta desde la fecha de la venta, así que se corre con ella.
+        const nuevaFecha = (fecha === undefined || fecha === null || fecha === '') ? null : fechaDelIngreso(fecha);
+        const nuevoVencimiento = nuevaFecha ? new Date(nuevaFecha) : null;
+        if (nuevoVencimiento) nuevoVencimiento.setFullYear(nuevoVencimiento.getFullYear() + 1);
 
         let personaData = null;
         if (persona_id) {
@@ -561,6 +586,7 @@ export const updateIngreso = async (req, res) => {
                     descripcion:      productoStr,
                     customer_email:   personaData?.email || customer_email || ingreso.customer_email,
                     persona_id:       persona_id ?? ingreso.persona_id,
+                    ...(nuevaFecha && { createdAt: nuevaFecha, fechaVencimiento: nuevoVencimiento }),
                     updatedAt:        new Date(),
                 },
             });
@@ -581,6 +607,7 @@ export const updateIngreso = async (req, res) => {
 
         return res.status(200).json({ message: "Ingreso actualizado", success: true });
     } catch (error) {
+        if (error.status === 400) return res.status(400).json({ message: error.message });
         return res.status(500).json({ message: "Error al actualizar", error: error.message });
     }
 };
