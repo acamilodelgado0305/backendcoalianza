@@ -139,6 +139,7 @@ model egresos {
   business_id Int?
   categoria_id Int?
   categoria    egreso_categorias? @relation(fields: [categoria_id], references: [id], onDelete: SetNull)
+  comprobante_url String? // documento soporte (PDF o imagen) en GCS
 
   @@index([legacyId], map: "idx_egresos_id_text")
 }

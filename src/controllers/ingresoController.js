@@ -2,7 +2,20 @@ import prisma from '../prisma.js';
 import { Prisma } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { uploadReceiptToGCS } from '../services/gcsPaymentReceipts.js';
+import { uploadComprobanteToGCS, deleteComprobanteFromGCS } from '../services/gcsComprobantes.js';
 import { parseRangoInicio, parseRangoFin } from '../utils/dateRange.js';
+
+// Ingreso del negocio activo por id numérico o por legacyId (UUID).
+const buscarIngreso = (id, businessId) =>
+    prisma.ingresos.findFirst({
+        where: {
+            business_id: businessId,
+            OR: [
+                { id:       isNaN(Number(id)) ? undefined : BigInt(id) },
+                { legacyId: id },
+            ].filter(c => Object.values(c)[0] !== undefined),
+        },
+    });
 
 // ==========================================
 // 1. CREAR INGRESO (Privado / Admin)
@@ -679,27 +692,67 @@ export const getIngresosMensuales = async (req, res) => {
 // ==========================================
 export const deleteIngreso = async (req, res) => {
     try {
-        const { id } = req.params;
-        const businessId = req.user?.bid;
-
-        const ingreso = await prisma.ingresos.findFirst({
-            where: {
-                business_id: businessId,
-                OR: [
-                    { id:       isNaN(Number(id)) ? undefined : BigInt(id) },
-                    { legacyId: id },
-                ].filter(c => Object.values(c)[0] !== undefined),
-            },
-        });
+        const ingreso = await buscarIngreso(req.params.id, req.user?.bid);
         if (!ingreso) return res.status(404).json({ message: "Ingreso no encontrado" });
 
         await prisma.$transaction(async (tx) => {
             await tx.ingreso_items.deleteMany({ where: { ingreso_id: ingreso.legacyId } });
             await tx.ingresos.delete({ where: { id: ingreso.id } });
         });
+        await deleteComprobanteFromGCS(ingreso.comprobante_url);
 
         return res.status(200).json({ message: "Ingreso eliminado correctamente" });
     } catch (error) {
         return res.status(500).json({ message: error.message || "Error al eliminar" });
+    }
+};
+
+// ==========================================
+// 11. DOCUMENTO SOPORTE (PDF o imagen)
+// ==========================================
+// Usa la misma columna `comprobante_url` que llena el formulario público de
+// pago. Va aparte del formulario (multipart, campo `archivo`, ver
+// middleware/uploadComprobante.js): el ingreso se guarda primero y luego se le
+// adjunta el documento. Subir otro lo reemplaza.
+export const subirComprobanteIngreso = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No autorizado" });
+
+        const ingreso = await buscarIngreso(req.params.id, businessId);
+        if (!ingreso) return res.status(404).json({ message: "Ingreso no encontrado" });
+
+        const url = await uploadComprobanteToGCS(req.file, { businessId, tipo: 'ingresos' });
+        await prisma.ingresos.update({
+            where: { id: ingreso.id },
+            data:  { comprobante_url: url, updatedAt: new Date() },
+        });
+        await deleteComprobanteFromGCS(ingreso.comprobante_url);
+
+        return res.status(200).json({ success: true, comprobante_url: url });
+    } catch (error) {
+        console.error("Error subiendo documento del ingreso:", error);
+        return res.status(500).json({ message: "No se pudo subir el documento" });
+    }
+};
+
+export const quitarComprobanteIngreso = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No autorizado" });
+
+        const ingreso = await buscarIngreso(req.params.id, businessId);
+        if (!ingreso) return res.status(404).json({ message: "Ingreso no encontrado" });
+
+        await prisma.ingresos.update({
+            where: { id: ingreso.id },
+            data:  { comprobante_url: null, updatedAt: new Date() },
+        });
+        await deleteComprobanteFromGCS(ingreso.comprobante_url);
+
+        return res.status(200).json({ success: true, comprobante_url: null });
+    } catch (error) {
+        console.error("Error quitando documento del ingreso:", error);
+        return res.status(500).json({ message: "No se pudo quitar el documento" });
     }
 };

@@ -2,6 +2,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { recibirComprobante } from '../middleware/uploadComprobante.js';
 import {
   createIngreso,
   createIngresoPublico,
@@ -12,7 +13,9 @@ import {
   getIngresosMensuales,
   verificarIngreso,
   updateIngreso,
-  deleteIngreso
+  deleteIngreso,
+  subirComprobanteIngreso,
+  quitarComprobanteIngreso
 } from '../controllers/ingresoController.js';
 
 const router = express.Router();
@@ -70,5 +73,11 @@ router.put('/:id', updateIngreso);
 // Eliminar
 // DELETE /api/ingresos/:id
 router.delete('/:id', deleteIngreso);
+
+// Documento soporte (PDF o imagen). Campo del formulario: name="archivo"
+// PUT /api/ingresos/:id/comprobante  → sube o reemplaza
+// DELETE /api/ingresos/:id/comprobante → lo quita
+router.put('/:id/comprobante', recibirComprobante, subirComprobanteIngreso);
+router.delete('/:id/comprobante', quitarComprobanteIngreso);
 
 export default router;

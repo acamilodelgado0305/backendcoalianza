@@ -1,6 +1,7 @@
 import prisma from '../prisma.js';
 import { v4 as uuidv4 } from 'uuid';
 import { buildFiltroFechas } from '../utils/dateRange.js';
+import { uploadComprobanteToGCS, deleteComprobanteFromGCS } from '../services/gcsComprobantes.js';
 
 // Prisma devuelve el campo `_id` de la DB como `legacyId` (por el @map).
 // El frontend espera `_id`, así que normalizamos antes de responder.
@@ -15,6 +16,18 @@ const normalizeEgreso = ({ categoria, ...e }) => ({
 const INCLUDE_CATEGORIA = { categoria: { select: { nombre: true, color: true } } };
 
 const errorHttp = (status, message) => Object.assign(new Error(message), { status });
+
+// Egreso del negocio activo por id numérico o por legacyId (UUID).
+const buscarEgreso = (id, businessId) =>
+    prisma.egresos.findFirst({
+        where: {
+            business_id: businessId,
+            OR: [
+                { id:       isNaN(Number(id)) ? undefined : BigInt(id) },
+                { legacyId: id },
+            ].filter(c => Object.values(c)[0] !== undefined),
+        },
+    });
 
 // Solo se aceptan categorías del negocio activo. null / '' quita la categoría.
 const resolverCategoria = async (valor, businessId) => {
@@ -175,21 +188,11 @@ export const updateEgreso = async (req, res) => {
 // ==========================================
 export const deleteEgreso = async (req, res) => {
     try {
-        const { id } = req.params;
-        const businessId = req.user?.bid;
-
-        const existente = await prisma.egresos.findFirst({
-            where: {
-                business_id: businessId,
-                OR: [
-                    { id:       isNaN(Number(id)) ? undefined : BigInt(id) },
-                    { legacyId: id },
-                ].filter(c => Object.values(c)[0] !== undefined),
-            },
-        });
+        const existente = await buscarEgreso(req.params.id, req.user?.bid);
         if (!existente) return res.status(404).json({ message: "Egreso no encontrado para eliminar" });
 
         await prisma.egresos.delete({ where: { id: existente.id } });
+        await deleteComprobanteFromGCS(existente.comprobante_url);
 
         return res.status(200).json({ message: "Egreso eliminado correctamente" });
     } catch (error) {
@@ -199,7 +202,58 @@ export const deleteEgreso = async (req, res) => {
 };
 
 // ==========================================
-// 6. CATEGORÍAS DE EGRESO (por negocio)
+// 6. DOCUMENTO SOPORTE (PDF o imagen)
+// ==========================================
+// Va aparte del formulario (multipart, campo `archivo`, ver
+// middleware/uploadComprobante.js): el egreso se guarda primero y luego se le
+// adjunta el documento. Subir otro reemplaza y borra el anterior.
+export const subirComprobanteEgreso = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
+
+        const existente = await buscarEgreso(req.params.id, businessId);
+        if (!existente) return res.status(404).json({ message: "Egreso no encontrado" });
+
+        const url = await uploadComprobanteToGCS(req.file, { businessId, tipo: 'egresos' });
+        const egreso = await prisma.egresos.update({
+            where:   { id: existente.id },
+            data:    { comprobante_url: url, updatedAt: new Date() },
+            include: INCLUDE_CATEGORIA,
+        });
+        await deleteComprobanteFromGCS(existente.comprobante_url);
+
+        return res.status(200).json(normalizeEgreso(egreso));
+    } catch (error) {
+        console.error("Error subiendo documento del egreso:", error);
+        return res.status(500).json({ message: "No se pudo subir el documento" });
+    }
+};
+
+export const quitarComprobanteEgreso = async (req, res) => {
+    try {
+        const businessId = req.user?.bid;
+        if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
+
+        const existente = await buscarEgreso(req.params.id, businessId);
+        if (!existente) return res.status(404).json({ message: "Egreso no encontrado" });
+
+        const egreso = await prisma.egresos.update({
+            where:   { id: existente.id },
+            data:    { comprobante_url: null, updatedAt: new Date() },
+            include: INCLUDE_CATEGORIA,
+        });
+        await deleteComprobanteFromGCS(existente.comprobante_url);
+
+        return res.status(200).json(normalizeEgreso(egreso));
+    } catch (error) {
+        console.error("Error quitando documento del egreso:", error);
+        return res.status(500).json({ message: "No se pudo quitar el documento" });
+    }
+};
+
+// ==========================================
+// 7. CATEGORÍAS DE EGRESO (por negocio)
 // ==========================================
 // En la interfaz se llaman «etiquetas» y tienen color (los mensajes de error
 // también dicen etiqueta); tablas, columnas y endpoints conservan `categoria`.
