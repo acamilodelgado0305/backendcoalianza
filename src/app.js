@@ -17,6 +17,7 @@ import { cuentasPorPagarRouter, cuentasPorCobrarRouter } from './routes/cuentasR
 import crmLeadRoutes from './routes/crmLeadRoutes.js';
 import finanzasRoutes from './routes/finanzasRoutes.js';
 import mercadoPagoRoutes from './routes/mercadoPagoRoutes.js';
+import publicoRoutes from './routes/publicoRoutes.js';
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ app.use(cors({
     'https://www.alianzacapacitarte.com',    // Landing Alianza Capacitarte — dominio principal (verificación)
     'https://alianzacapacitarte.com',        // apex (redirige a www, por si acaso)
     'https://alianzacapacitarte.vercel.app', // dominio Vercel por defecto / previews
+    'https://oble-pedidos.vercel.app',       // Oblé — página de pedidos (POST /api/publico)
     'http://127.0.0.1:5501'
   ]
 }));
@@ -70,6 +72,7 @@ app.use('/api/cuentas-por-cobrar', cuentasPorCobrarRouter);
 app.use('/api/crm/leads', crmLeadRoutes);
 app.use('/api/finanzas', finanzasRoutes);
 app.use('/api/pagos/mp', mercadoPagoRoutes);
+app.use('/api/publico', publicoRoutes); // pedidos y leads desde páginas web de negocios (sin token)
 
 // Conectar a la base de datos
 
