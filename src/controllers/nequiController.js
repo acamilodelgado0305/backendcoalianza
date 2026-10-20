@@ -31,7 +31,6 @@ const PRODUCTOS_NEQUI = [
 const DOCUMENTO_RE  = /^[0-9A-Z]{4,15}$/;
 const REFERENCIA_RE = /^[0-9A-Za-z_.:-]{1,60}$/;
 const EMAIL_RE      = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const DIA_MS        = 24 * 60 * 60 * 1000;
 
 // El landing guarda el documento tal como lo escribe el cliente; aquí se compara
 // sin puntos, espacios ni guiones para que "1.234.567" y "1234567" sean el mismo.
@@ -91,22 +90,38 @@ const leerMonto = (valor) => {
 };
 
 
-// Mismas reglas que andesfront (components/Certificados/envioDocumentos.js):
+// Fechas del diploma de acreditación (Auxiliar de Bodega), en días de Colombia:
+//   · expedición: el día en que llegó el pago, pero nunca domingo (pasa al sábado)
+//   · fin: el día antes de la expedición, para que no figure terminando el mismo
+//     día en que se expide
+//   · inicio: un mes calendario antes del fin (19 sep → 19 oct; si ese día no
+//     existe en el mes anterior, el último día de ese mes: 31 mar → 28/29 feb)
+const periodoAcreditacion = (fechaVenta) => {
+    const [y, m, d] = fechaBogota(fechaVenta).split('-').map(Number);
+    const dia = (anio, mes, dd) => new Date(Date.UTC(anio, mes, dd, 12)); // mediodía: sin saltos de zona
+    const iso = (f) => f.toISOString().slice(0, 10);
+
+    const expedicion = dia(y, m - 1, d);
+    if (expedicion.getUTCDay() === 0) expedicion.setUTCDate(expedicion.getUTCDate() - 1);
+    const fin = dia(expedicion.getUTCFullYear(), expedicion.getUTCMonth(), expedicion.getUTCDate() - 1);
+    const ultimoDelMesAnterior = dia(fin.getUTCFullYear(), fin.getUTCMonth(), 0).getUTCDate();
+    const inicio = dia(fin.getUTCFullYear(), fin.getUTCMonth() - 1, Math.min(fin.getUTCDate(), ultimoDelMesAnterior));
+
+    return { fechaInicio: iso(inicio), fechaFin: iso(fin), fechaExpedicion: iso(expedicion) };
+};
+
+// Mismas plantillas que andesfront (components/Certificados/envioDocumentos.js):
 //   · 'alimentos'    → certificado + carnet  (10 h si el ítem no trae horas)
-//   · 'acreditacion' → diploma + certificado (40 h), con el curso terminado el día
-//     anterior a la venta y 30 días de duración, expedido el día de la venta.
+//   · 'acreditacion' → diploma + certificado (40 h), fechas de periodoAcreditacion
 const construirCorreo = (item, cliente, fechaVenta) => {
     if (item.plantilla_correo === 'acreditacion') {
-        const fin = new Date(fechaVenta.getTime() - DIA_MS);
         return {
             endpoint: '/api/enviar-acreditacion',
             body: {
                 ...cliente,
                 curso:             item.nombre,
                 intensidadHoraria: item.intensidad_horaria || '40',
-                fechaInicio:       fechaBogota(new Date(fin.getTime() - 30 * DIA_MS)),
-                fechaFin:          fechaBogota(fin),
-                fechaExpedicion:   fechaBogota(fechaVenta),
+                ...periodoAcreditacion(fechaVenta),
             },
         };
     }
