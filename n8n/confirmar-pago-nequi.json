@@ -169,7 +169,8 @@
         "chatId": "-5109309015",
         "text": "=✅ Pago Nequi entregado\n{{ $json.nombre }} · {{ $json.documento }}\n{{ $json.producto }} — ${{ $json.valor }}\nDocumentos a: {{ $json.correo || 'no aplica' }}\nMeta (Purchase): {{ $json.capi }}\nVenta #{{ $json.ingreso_id }} · Nequi {{ $('Extraer datos del pago').item.json.referencia_nequi || '' }}",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "a1f0c1d2-0006-4c8e-9a01-000000000006",
@@ -186,7 +187,8 @@
         "chatId": "-5109309015",
         "text": "=⚠️ Pago Nequi para revisar: {{ $json.estado || 'SIN RESPUESTA DEL BACKEND' }}\nDocumento: {{ $('Extraer datos del pago').item.json.documento }} · ${{ $('Extraer datos del pago').item.json.monto }}\n{{ $json.nombre ? 'Lead: ' + $json.nombre : '' }}\n{{ $json.detalle || ($json.error && $json.error.message) || $json.message || '' }}\nNequi: {{ $('Extraer datos del pago').item.json.referencia_nequi || '-' }} · Correo: {{ $('Extraer datos del pago').item.json.referencia }}\n(El correo queda sin leer.)",
         "additionalFields": {
-          "appendAttribution": false
+          "appendAttribution": false,
+          "parse_mode": "HTML"
         }
       },
       "id": "a1f0c1d2-0007-4c8e-9a01-000000000007",
