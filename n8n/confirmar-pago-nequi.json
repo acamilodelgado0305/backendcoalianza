@@ -82,11 +82,6 @@
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ referencia: $json.referencia, referencia_nequi: $json.referencia_nequi, documento: $json.documento, monto: $json.monto, fecha: $json.fecha, fecha_nequi: $json.fecha_nequi }) }}",
         "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          },
           "timeout": 60000
         }
       },
@@ -97,7 +92,11 @@
       "position": [
         660,
         280
-      ]
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -185,7 +184,7 @@
     {
       "parameters": {
         "chatId": "-5109309015",
-        "text": "=⚠️ Pago Nequi para revisar: {{ $json.estado || 'SIN RESPUESTA DEL BACKEND' }}\nDocumento: {{ $('Extraer datos del pago').item.json.documento }} · ${{ $('Extraer datos del pago').item.json.monto }}\n{{ $json.nombre ? 'Lead: ' + $json.nombre : '' }}\n{{ $json.detalle || $json.message || '' }}\nNequi: {{ $('Extraer datos del pago').item.json.referencia_nequi || '-' }} · Correo: {{ $('Extraer datos del pago').item.json.referencia }}\n(El correo queda sin leer.)",
+        "text": "=⚠️ Pago Nequi para revisar: {{ $json.estado || 'SIN RESPUESTA DEL BACKEND' }}\nDocumento: {{ $('Extraer datos del pago').item.json.documento }} · ${{ $('Extraer datos del pago').item.json.monto }}\n{{ $json.nombre ? 'Lead: ' + $json.nombre : '' }}\n{{ $json.detalle || ($json.error && $json.error.message) || $json.message || '' }}\nNequi: {{ $('Extraer datos del pago').item.json.referencia_nequi || '-' }} · Correo: {{ $('Extraer datos del pago').item.json.referencia }}\n(El correo queda sin leer.)",
         "additionalFields": {
           "appendAttribution": false
         }
