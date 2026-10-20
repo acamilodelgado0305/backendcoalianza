@@ -90,19 +90,28 @@ const leerMonto = (valor) => {
 };
 
 
-// Fechas del diploma de acreditación (Auxiliar de Bodega), en días de Colombia:
-//   · expedición: el día en que llegó el pago, pero nunca domingo (pasa al sábado)
+// Días de calendario de Colombia representados a mediodía UTC: así sumar o restar
+// días y meses nunca salta de fecha por la zona horaria.
+const dia = (anio, mes, dd) => new Date(Date.UTC(anio, mes, dd, 12));
+const iso = (f) => f.toISOString().slice(0, 10);
+
+// Expedición de los documentos (las dos plantillas): el día en que llegó el pago,
+// pero nunca domingo — un pago del domingo se expide el sábado.
+const diaDeExpedicion = (fechaVenta) => {
+    const [y, m, d] = fechaBogota(fechaVenta).split('-').map(Number);
+    const expedicion = dia(y, m - 1, d);
+    if (expedicion.getUTCDay() === 0) expedicion.setUTCDate(expedicion.getUTCDate() - 1);
+    return expedicion;
+};
+
+// Fechas del diploma de acreditación (Auxiliar de Bodega):
+//   · expedición: diaDeExpedicion
 //   · fin: el día antes de la expedición, para que no figure terminando el mismo
 //     día en que se expide
 //   · inicio: un mes calendario antes del fin (19 sep → 19 oct; si ese día no
 //     existe en el mes anterior, el último día de ese mes: 31 mar → 28/29 feb)
 const periodoAcreditacion = (fechaVenta) => {
-    const [y, m, d] = fechaBogota(fechaVenta).split('-').map(Number);
-    const dia = (anio, mes, dd) => new Date(Date.UTC(anio, mes, dd, 12)); // mediodía: sin saltos de zona
-    const iso = (f) => f.toISOString().slice(0, 10);
-
-    const expedicion = dia(y, m - 1, d);
-    if (expedicion.getUTCDay() === 0) expedicion.setUTCDate(expedicion.getUTCDate() - 1);
+    const expedicion = diaDeExpedicion(fechaVenta);
     const fin = dia(expedicion.getUTCFullYear(), expedicion.getUTCMonth(), expedicion.getUTCDate() - 1);
     const ultimoDelMesAnterior = dia(fin.getUTCFullYear(), fin.getUTCMonth(), 0).getUTCDate();
     const inicio = dia(fin.getUTCFullYear(), fin.getUTCMonth() - 1, Math.min(fin.getUTCDate(), ultimoDelMesAnterior));
@@ -111,7 +120,8 @@ const periodoAcreditacion = (fechaVenta) => {
 };
 
 // Mismas plantillas que andesfront (components/Certificados/envioDocumentos.js):
-//   · 'alimentos'    → certificado + carnet  (10 h si el ítem no trae horas)
+//   · 'alimentos'    → certificado + carnet  (10 h si el ítem no trae horas), expedido
+//     en diaDeExpedicion y con el carnet vencido un año después
 //   · 'acreditacion' → diploma + certificado (40 h), fechas de periodoAcreditacion
 const construirCorreo = (item, cliente, fechaVenta) => {
     if (item.plantilla_correo === 'acreditacion') {
@@ -126,15 +136,16 @@ const construirCorreo = (item, cliente, fechaVenta) => {
         };
     }
 
-    const vencimiento = new Date(fechaVenta);
-    vencimiento.setFullYear(vencimiento.getFullYear() + 1);
+    // El carnet vence un año después de la expedición.
+    const expedicion = diaDeExpedicion(fechaVenta);
+    const vencimiento = dia(expedicion.getUTCFullYear() + 1, expedicion.getUTCMonth(), expedicion.getUTCDate());
     return {
         endpoint: '/api/enviar-documentos',
         body: {
             ...cliente,
             intensidadHoraria: item.intensidad_horaria || '10',
-            fechaExpedicion:   fechaBogota(fechaVenta),
-            fechaVencimiento:  fechaBogota(vencimiento),
+            fechaExpedicion:   iso(expedicion),
+            fechaVencimiento:  iso(vencimiento),
         },
     };
 };
