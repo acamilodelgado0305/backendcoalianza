@@ -335,6 +335,30 @@ model mp_pagos {
   @@index([external_reference], map: "idx_mp_pagos_reference")
 }
 
+/// Pagos Nequi que n8n confirma desde el correo de notificación (ver prisma/sql/nequi_pagos.sql).
+model nequi_pagos {
+  id                Int       @id @default(autoincrement())
+  referencia        String    @unique @db.VarChar(64)
+  documento         String    @db.VarChar(20)
+  monto             Decimal   @db.Decimal(12, 2)
+  fecha_pago        DateTime? @db.Timestamptz(6)
+  estado_proceso    String    @default("RECIBIDO") @db.VarChar(20)
+  intentos          Int       @default(0)
+  lead_id           Int?
+  inventario_id     Int?
+  ingreso_id        BigInt?
+  capi_estado       String?   @db.VarChar(20)
+  correo_enviado_a  String?   @db.VarChar(150)
+  correo_enviado_at DateTime? @db.Timestamp(6)
+  error             String?
+  raw               Json?
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+  updated_at        DateTime  @default(now()) @db.Timestamp(6)
+
+  @@index([estado_proceso], map: "idx_nequi_pagos_estado")
+  @@index([documento], map: "idx_nequi_pagos_documento")
+}
+
 enum estado_pedido_enum {
   PENDIENTE
   ENTREGADO

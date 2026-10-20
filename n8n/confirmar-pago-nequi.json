@@ -1,0 +1,304 @@
+{
+  "name": "Pagos Nequi → QControla (solo verificación)",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "sender": "notificaciones@nequi.com.co"
+        },
+        "options": {}
+      },
+      "id": "a1f0c1d2-0001-4c8e-9a01-000000000001",
+      "name": "Correo de Nequi",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Lee el correo de Nequi Negocios y saca SOLO lo que QControla necesita.\n// Todo lo demás (lead GANADO, venta, Purchase a Meta, documentos por correo)\n// lo hace el backend en POST /api/pagos/nequi/confirmar.\n//\n// Etiquetas del correo (las mismas que leía el flujo \"Correos Electronicos\"):\n//   Monto: COP $25,000 · Referencia1: <documento del cliente> · Referencia: <código Nequi> · Fecha: dd/mm/aaaa hh:mm\nconst correo = $input.item.json;\nconst texto = String(correo.text || correo.html || '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&nbsp;| /g, ' ')\n  .replace(/[ \\t]+/g, ' ');\n\nconst campo = (re) => (texto.match(re)?.[1] || '').trim();\n\n// \"25,000\" · \"25.000\" · \"25.000,00\" · \"25,000.00\" → 25000\n// Solo un separador seguido de exactamente 2 dígitos al final es decimal; los demás son de miles.\nconst leerMonto = (txt) => {\n  if (!txt) return 0;\n  const n = Number(txt.replace(/[.,](\\d{2})$/, '#$1').replace(/[.,]/g, '').replace('#', '.'));\n  return Number.isFinite(n) ? n : 0;\n};\n\nconst monto = leerMonto(\n  campo(/Monto\\s*:\\s*(?:COP)?\\s*\\$?\\s*([\\d.,]+)/i) || campo(/\\$\\s*([\\d.,]+)/)\n);\n\n// Documento del cliente: lo escribe en \"Referencia1\" al pagar.\nconst documento = campo(/Referencia\\s*1\\s*:\\s*([0-9A-Za-z][0-9A-Za-z.\\-]{3,24})/i).replace(/[^0-9A-Za-z]/g, '');\n\n// Código de la transacción en Nequi (para conciliar en la app de Nequi).\nconst referenciaNequi = campo(/Referencia\\s*:\\s*([0-9A-Za-z_.\\-]+)/i);\n\nreturn {\n  json: {\n    // Un correo = un pago: el id del correo de Gmail es la llave que evita\n    // registrar dos veces la misma venta (no depende del formato de Nequi).\n    referencia: correo.id,\n    referencia_nequi: referenciaNequi || null,\n    documento,\n    monto,\n    fecha: correo.date || null,\n    fecha_nequi: campo(/Fecha\\s*:\\s*([\\d\\/]+ [\\d:]+)/i) || null,\n    esValido: Boolean(documento && monto > 0),\n  },\n};"
+      },
+      "id": "a1f0c1d2-0002-4c8e-9a01-000000000002",
+      "name": "Extraer datos del pago",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b7e1c3a0-0003-4c8e-9a01-000000000003",
+              "leftValue": "={{ $json.esValido }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1f0c1d2-0003-4c8e-9a01-000000000003",
+      "name": "¿Es un pago?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://controla-570877385695.northamerica-northeast1.run.app/api/pagos/nequi/confirmar",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ referencia: $json.referencia, referencia_nequi: $json.referencia_nequi, documento: $json.documento, monto: $json.monto, fecha: $json.fecha, fecha_nequi: $json.fecha_nequi }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "a1f0c1d2-0004-4c8e-9a01-000000000004",
+      "name": "Confirmar en QControla",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "c1d2e3f4-0005-4c8e-9a01-000000000005",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "ENTREGADO",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Entregado"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "c1d2e3f4-0006-4c8e-9a01-000000000006",
+                    "leftValue": "={{ $json.estado }}",
+                    "rightValue": "YA_PROCESADO",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Ya procesado"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Revisar"
+        }
+      },
+      "id": "a1f0c1d2-0005-4c8e-9a01-000000000005",
+      "name": "Según el resultado",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        880,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-5109309015",
+        "text": "=✅ Pago Nequi entregado\n{{ $json.nombre }} · {{ $json.documento }}\n{{ $json.producto }} — ${{ $json.valor }}\nDocumentos a: {{ $json.correo || 'no aplica' }}\nMeta (Purchase): {{ $json.capi }}\nVenta #{{ $json.ingreso_id }} · Nequi {{ $('Extraer datos del pago').item.json.referencia_nequi || '' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a1f0c1d2-0006-4c8e-9a01-000000000006",
+      "name": "Telegram: entregado",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "-5109309015",
+        "text": "=⚠️ Pago Nequi para revisar: {{ $json.estado || 'SIN RESPUESTA DEL BACKEND' }}\nDocumento: {{ $('Extraer datos del pago').item.json.documento }} · ${{ $('Extraer datos del pago').item.json.monto }}\n{{ $json.nombre ? 'Lead: ' + $json.nombre : '' }}\n{{ $json.detalle || $json.message || '' }}\nNequi: {{ $('Extraer datos del pago').item.json.referencia_nequi || '-' }} · Correo: {{ $('Extraer datos del pago').item.json.referencia }}\n(El correo queda sin leer.)",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a1f0c1d2-0007-4c8e-9a01-000000000007",
+      "name": "Telegram: revisar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('Correo de Nequi').item.json.id }}"
+      },
+      "id": "a1f0c1d2-0008-4c8e-9a01-000000000008",
+      "name": "Marcar como leído",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1320,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Correo de Nequi": {
+      "main": [
+        [
+          {
+            "node": "Extraer datos del pago",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer datos del pago": {
+      "main": [
+        [
+          {
+            "node": "¿Es un pago?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es un pago?": {
+      "main": [
+        [
+          {
+            "node": "Confirmar en QControla",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Confirmar en QControla": {
+      "main": [
+        [
+          {
+            "node": "Según el resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Según el resultado": {
+      "main": [
+        [
+          {
+            "node": "Telegram: entregado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Marcar como leído",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: revisar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: entregado": {
+      "main": [
+        [
+          {
+            "node": "Marcar como leído",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

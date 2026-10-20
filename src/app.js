@@ -17,6 +17,7 @@ import { cuentasPorPagarRouter, cuentasPorCobrarRouter } from './routes/cuentasR
 import crmLeadRoutes from './routes/crmLeadRoutes.js';
 import finanzasRoutes from './routes/finanzasRoutes.js';
 import mercadoPagoRoutes from './routes/mercadoPagoRoutes.js';
+import nequiRoutes from './routes/nequiRoutes.js';
 import publicoRoutes from './routes/publicoRoutes.js';
 
 dotenv.config();
@@ -72,6 +73,7 @@ app.use('/api/cuentas-por-cobrar', cuentasPorCobrarRouter);
 app.use('/api/crm/leads', crmLeadRoutes);
 app.use('/api/finanzas', finanzasRoutes);
 app.use('/api/pagos/mp', mercadoPagoRoutes);
+app.use('/api/pagos/nequi', nequiRoutes); // n8n confirma el pago leyendo el correo de Nequi
 app.use('/api/publico', publicoRoutes); // pedidos y leads desde páginas web de negocios (sin token)
 
 // Conectar a la base de datos
