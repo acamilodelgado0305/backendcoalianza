@@ -546,7 +546,10 @@ export const confirmarPagoNequi = async (req, res) => {
             INSERT INTO nequi_pagos (referencia, documento, monto, fecha_pago, raw)
             VALUES (${referencia}, ${documento}, ${monto}, ${fecha && !isNaN(fecha) ? fecha : null},
                     ${JSON.stringify(req.body)}::jsonb)
-            ON CONFLICT (referencia) DO NOTHING
+            ON CONFLICT (referencia) DO UPDATE
+            -- Un aviso repetido suma lo que traiga de nuevo (p. ej. el número de
+            -- transacción que el lector de n8n antes no sacaba) sin tocar el resto.
+            SET raw = nequi_pagos.raw || EXCLUDED.raw
         `;
         const resultado = await procesarPagoNequi(referencia);
         return res.status(200).json(resultado);
