@@ -400,10 +400,12 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
 // 2. CONFIRMAR UN PAGO (LO LLAMA n8n)
 // ==========================================
 // POST /api/pagos/nequi/confirmar   header x-api-key: NEQUI_WEBHOOK_SECRET
-// { referencia, documento, monto, fecha? }
+// { referencia, documento, monto, estado, fecha? }
+// `estado` es el "Estado:" del correo de Nequi. Solo APROBADA se procesa: Nequi
+// manda el mismo correo, con monto y Referencia1, también para las RECHAZADAS.
 // Responde 200 con `estado` para todo lo que se pudo decidir (ENTREGADO,
-// YA_PROCESADO, SIN_LEAD, SIN_CORREO, MONTO_DISTINTO, YA_REGISTRADO) y 500 con
-// estado ERROR si algo falló a mitad de camino (reenviarlo retoma lo que faltó).
+// YA_PROCESADO, SIN_LEAD, SIN_CORREO, MONTO_DISTINTO, YA_REGISTRADO, NO_APROBADO)
+// y 500 con estado ERROR si algo falló a mitad de camino (reenviarlo retoma lo que faltó).
 export const confirmarPagoNequi = async (req, res) => {
     // Este endpoint entrega certificados: sin clave configurada no se abre.
     if (!API_KEY) {
@@ -415,10 +417,20 @@ export const confirmarPagoNequi = async (req, res) => {
     const referencia = String(req.body?.referencia ?? '').trim();
     const documento  = normalizarDocumento(req.body?.documento);
     const monto      = leerMonto(req.body?.monto);
+    const estadoPago = String(req.body?.estado ?? '').trim().toUpperCase();
     const fecha      = req.body?.fecha ? new Date(req.body.fecha) : null;
 
     if (!REFERENCIA_RE.test(referencia)) {
         return res.status(400).json({ code: 'REFERENCIA_INVALIDA', message: 'Referencia del pago inválida.' });
+    }
+    // Sin estado no se entrega nada: es preferible que un pago quede para revisar
+    // a que una transacción rechazada reciba sus documentos.
+    if (!estadoPago) {
+        return res.status(400).json({ code: 'ESTADO_REQUERIDO', message: 'Falta el estado de la transacción (APROBADA/RECHAZADA).' });
+    }
+    if (estadoPago !== 'APROBADA') {
+        console.log(`[Nequi] Aviso ${referencia} ignorado: transacción ${estadoPago}`);
+        return res.status(200).json({ referencia, estado: 'NO_APROBADO', estado_nequi: estadoPago, detalle: `Transacción ${estadoPago} en Nequi` });
     }
     if (!DOCUMENTO_RE.test(documento)) {
         return res.status(400).json({ code: 'DOCUMENTO_INVALIDO', message: 'Número de documento inválido.' });
