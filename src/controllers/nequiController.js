@@ -7,25 +7,31 @@ import { sendLeadEvent, estadoToEventName } from '../services/metaConversions.js
 // Pagos por Nequi Negocios de CertiTec.
 //
 // n8n solo lee el correo de notificación de Nequi (notificaciones@nequi.com.co),
-// saca el documento del cliente ("Referencia1"), el monto y el código de Nequi, y
-// llama a POST /api/pagos/nequi/confirmar con el id del correo de Gmail como
-// `referencia` (un correo = un pago). Todo lo demás pasa aquí: el
-// lead pasa a GANADO, se registra la venta en `ingresos` (cuenta Nequi), se manda
+// saca el documento del cliente ("Referencia1"), el monto, el código de Nequi y el
+// número de transacción, y llama a POST /api/pagos/nequi/confirmar con el id del
+// correo de Gmail como `referencia` (un correo = un pago). Todo lo demás pasa aquí:
+// el lead pasa a GANADO, se registra la venta en `ingresos` (cuenta Nequi), se manda
 // el Purchase a Meta y andesback (clasit-backend-api) envía los documentos.
+//
+// El link de pago de Nequi Negocios corre sobre Wompi: con el número de transacción
+// se le pregunta a Wompi el estado real del pago y el correo/celular que el cliente
+// escribió al pagar, para encontrarlo aunque en Referencia1 haya puesto otra cosa.
 
-const BUSINESS_ID  = Number(process.env.NEQUI_BUSINESS_ID) || 3; // CertiTec en el CRM
-const API_KEY      = process.env.NEQUI_WEBHOOK_SECRET || '';     // la manda n8n en x-api-key
-const DOCS_API_URL = (process.env.DOCS_API_URL || 'https://clasit-backend-api-570877385695.us-central1.run.app').replace(/\/+$/, '');
-const CUENTA       = 'Nequi';
+const BUSINESS_ID   = Number(process.env.NEQUI_BUSINESS_ID) || 3; // CertiTec en el CRM
+const API_KEY       = process.env.NEQUI_WEBHOOK_SECRET || '';     // la manda n8n en x-api-key
+const DOCS_API_URL  = (process.env.DOCS_API_URL || 'https://clasit-backend-api-570877385695.us-central1.run.app').replace(/\/+$/, '');
+const WOMPI_API_URL = (process.env.WOMPI_API_URL || 'https://production.wompi.co/v1').replace(/\/+$/, '');
+const CUENTA        = 'Nequi';
 
-// Lo que se cobra por Nequi. El monto pagado decide el curso —así se hacía a mano:
-// hay clientes con un lead por cada curso, y el del curso pagado es el que pasa a
-// GANADO—. El ítem del inventario decide qué queda en la venta y qué documentos
-// salen por correo (send_mail / plantilla_correo / intensidad_horaria), igual que
-// cuando se vende desde el CRM.
+// Lo que se cobra por Nequi. Cada curso tiene su propio link de pago (`link`, que
+// llega como prefijo de la referencia de Wompi: "8c4kg6_1792610277_…"); si el link
+// no es uno de estos, el monto decide el curso, como se hacía a mano. Hay clientes
+// con un lead por cada curso, y el del curso pagado es el que pasa a GANADO.
+// El ítem del inventario decide qué queda en la venta y qué documentos salen por
+// correo (send_mail / plantilla_correo / intensidad_horaria), igual que en el CRM.
 const PRODUCTOS_NEQUI = [
-    { servicio: 'manipulacion-alimentos', precio: 25000, inventarioId: 2 },   // certificado + carnet
-    { servicio: 'auxiliar-bodega',        precio: 50000, inventarioId: 149 }, // diploma + certificado
+    { servicio: 'manipulacion-alimentos', precio: 25000, inventarioId: 2,   link: '8c4kg6' }, // certificado + carnet
+    { servicio: 'auxiliar-bodega',        precio: 50000, inventarioId: 149, link: 'jzJ7MY' }, // diploma + certificado
 ];
 
 const DOCUMENTO_RE  = /^[0-9A-Z]{4,15}$/;
@@ -59,6 +65,57 @@ const buscarLead = async (documento, servicioPreferido = null) => {
         LIMIT 1
     `;
     return filas[0] || null;
+};
+
+/**
+ * Lead por el correo o el celular que el cliente escribió al pagar en Wompi, para
+ * cuando en Referencia1 puso otra cosa. Solo vale si apunta a UNA persona: si ese
+ * correo o celular está en leads con cédulas distintas (una mamá que inscribió a
+ * dos hijos, por ejemplo), no se adivina.
+ */
+const buscarLeadPorContacto = async ({ email, telefono }, servicioPreferido = null) => {
+    const correo  = String(email || '').trim().toLowerCase();
+    const celular = String(telefono || '').replace(/\D/g, '').slice(-10);
+    let condicion;
+    if (esEmail(correo)) {
+        condicion = Prisma.sql`LOWER(TRIM(email)) = ${correo}`;
+    } else if (celular.length === 10) {
+        condicion = Prisma.sql`RIGHT(regexp_replace(COALESCE(telefono, ''), '[^0-9]', '', 'g'), 10) = ${celular}`;
+    } else {
+        return null;
+    }
+
+    const filas = await prisma.$queryRaw`
+        SELECT id, nombre, tipo_documento, numero_documento, email, telefono, estado, notas,
+               persona_id, servicio, valor_estimado, fbc, fbp
+        FROM crm_leads
+        WHERE business_id = ${BUSINESS_ID} AND ${condicion}
+        ORDER BY (servicio = ${servicioPreferido}) IS TRUE DESC, created_at DESC
+        LIMIT 20
+    `;
+    const personas = new Set(filas.map((f) => normalizarDocumento(f.numero_documento) || `lead-${f.id}`));
+    return personas.size === 1 ? filas[0] : null;
+};
+
+/**
+ * El pago tal como lo ve Wompi: estado real, monto, link (= curso) y el correo y
+ * celular que el cliente escribió al pagar. Es la consulta pública por id de
+ * transacción (no necesita llaves). Si Wompi no responde devuelve null y el pago
+ * sigue solo con lo que dice el correo de Nequi.
+ */
+const consultarWompi = async (transaccion) => {
+    if (!/^[0-9A-Za-z-]{5,60}$/.test(String(transaccion || ''))) return null;
+    try {
+        const res = await fetch(`${WOMPI_API_URL}/transactions/${transaccion}`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) {
+            console.warn(`[Nequi] Wompi respondió ${res.status} para la transacción ${transaccion}`);
+            return null;
+        }
+        return (await res.json())?.data || null;
+    } catch (error) {
+        console.warn(`[Nequi] No se pudo consultar Wompi (${transaccion}):`, error.message);
+        return null;
+    }
 };
 
 /** Pide a andesback que genere y envíe los documentos del curso por correo. */
@@ -171,7 +228,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
           AND (${reintentables}
                OR (estado_proceso = 'PROCESANDO' AND updated_at < NOW() - INTERVAL '5 minutes'))
         RETURNING documento, monto, lead_id, inventario_id, ingreso_id, capi_estado, correo_enviado_at, created_at,
-                  raw->>'referencia_nequi' AS referencia_nequi
+                  raw->>'referencia_nequi' AS referencia_nequi, raw->>'transaccion' AS transaccion
     `;
     if (!pago) {
         const actual = await prisma.nequi_pagos.findUnique({
@@ -192,13 +249,36 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         data:  { estado_proceso: estado, ...datos, updated_at: new Date() },
     });
 
-    const documento = pago.documento;
-    const monto     = Number(pago.monto);
+    let documento = pago.documento;
+    const monto   = Number(pago.monto);
 
     try {
-        // 1. ¿Qué compró? El monto tiene que ser el precio de un curso (o el curso
-        //    lo eligió alguien al reprocesar).
-        const inventarioId = pago.inventario_id ?? PRODUCTOS_NEQUI.find((p) => p.precio === monto)?.inventarioId;
+        // 0. Wompi es la fuente de verdad del pago. Si no responde, se sigue con lo
+        //    que dice el correo (que ya llegó como APROBADA).
+        const wompi = await consultarWompi(pago.transaccion);
+        if (wompi && wompi.status !== 'APPROVED') {
+            const error = `Wompi reporta la transacción ${pago.transaccion} como ${wompi.status}`;
+            await finalizar('NO_APROBADO', { error });
+            return { referencia, estado: 'NO_APROBADO', documento, valor: monto, detalle: error };
+        }
+        if (wompi && Number(wompi.amount_in_cents) / 100 !== monto) {
+            const error = `El correo dice $${monto} y Wompi $${Number(wompi.amount_in_cents) / 100}`;
+            await finalizar('MONTO_DISTINTO', { error });
+            return { referencia, estado: 'MONTO_DISTINTO', documento, valor: monto, detalle: error };
+        }
+
+        // 1. ¿Qué compró? Lo dice el link de pago; si es otro link, el monto (o el
+        //    curso que eligió alguien al reprocesar).
+        const link = wompi?.payment_link_id || String(pago.referencia_nequi || '').split('_')[0];
+        const porLink = PRODUCTOS_NEQUI.find((p) => p.link === link);
+        if (!pago.inventario_id && porLink && porLink.precio !== monto) {
+            const error = `Pagó $${monto} por el link de ${porLink.servicio}, que cuesta $${porLink.precio}`;
+            await finalizar('MONTO_DISTINTO', { error });
+            return { referencia, estado: 'MONTO_DISTINTO', documento, valor: monto, detalle: error };
+        }
+        const inventarioId = pago.inventario_id
+            ?? porLink?.inventarioId
+            ?? PRODUCTOS_NEQUI.find((p) => p.precio === monto)?.inventarioId;
         if (!inventarioId) {
             const error = `Monto ${monto} no corresponde a ningún curso`;
             await finalizar('MONTO_DISTINTO', { error });
@@ -206,15 +286,32 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         }
         const servicio = PRODUCTOS_NEQUI.find((p) => p.inventarioId === inventarioId)?.servicio ?? null;
 
-        // 2. ¿De quién es el pago? Si tiene un lead por curso, el del curso pagado.
-        const lead = pago.lead_id
+        // 2. ¿De quién es el pago? Por la cédula de Referencia1; si ahí escribió otra
+        //    cosa, por el correo y luego el celular que puso al pagar en Wompi. Si
+        //    tiene un lead por curso, el del curso pagado.
+        let identificadoPor = 'documento';
+        let lead = pago.lead_id
             ? await prisma.crm_leads.findUnique({ where: { id: pago.lead_id } })
             : await buscarLead(documento, servicio);
+        if (!lead && wompi) {
+            lead = await buscarLeadPorContacto({ email: wompi.customer_email }, servicio);
+            if (lead) identificadoPor = 'correo';
+        }
+        if (!lead && wompi) {
+            lead = await buscarLeadPorContacto({ telefono: wompi.customer_data?.phone_number }, servicio);
+            if (lead) identificadoPor = 'celular';
+        }
         if (!lead) {
-            const error = `Sin lead de CertiTec con documento ${documento}`;
+            const error = wompi
+                ? `Sin lead de CertiTec con documento ${documento}, ni con el correo o el celular del pago en Wompi`
+                : `Sin lead de CertiTec con documento ${documento}`;
             await finalizar('SIN_LEAD', { inventario_id: inventarioId, error });
             return { referencia, estado: 'SIN_LEAD', documento, valor: monto, detalle: error };
         }
+        // Con el cliente identificado, la venta y los documentos van con SU cédula,
+        // no con lo que haya escrito en Referencia1.
+        const documentoLead = normalizarDocumento(lead.numero_documento);
+        if (DOCUMENTO_RE.test(documentoLead)) documento = documentoLead;
 
         const item = await prisma.inventario.findFirst({
             where:  { id: inventarioId, business_id: BUSINESS_ID },
@@ -332,7 +429,11 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
                     data: {
                         estado:     'GANADO',
                         persona_id: persona?.id ?? lead.persona_id ?? null,
-                        notas:      [lead.notas, `Pagado por Nequi (ref ${pago.referencia_nequi || referencia})`].filter(Boolean).join(' | '),
+                        notas:      [
+                            lead.notas,
+                            `Pagado por Nequi (ref ${pago.referencia_nequi || referencia}`
+                                + (identificadoPor === 'documento' ? ')' : `, identificado por el ${identificadoPor} del pago)`),
+                        ].filter(Boolean).join(' | '),
                         updated_at: ahora,
                     },
                 });
@@ -388,6 +489,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             valor:      monto,
             correo:     item.send_mail ? email : null,
             capi:       capiEstado,
+            identificado_por: identificadoPor,
         };
     } catch (error) {
         await finalizar('ERROR', { error: String(error.message || error).slice(0, 1000) })
