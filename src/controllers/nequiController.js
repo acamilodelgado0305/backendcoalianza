@@ -102,6 +102,9 @@ const buscarLeadPorContacto = async ({ email, telefono }, servicioPreferido = nu
  * celular que el cliente escribió al pagar. Es la consulta pública por id de
  * transacción (no necesita llaves). Si Wompi no responde devuelve null y el pago
  * sigue solo con lo que dice el correo de Nequi.
+ * OJO: Wompi solo expone la transacción ~1 hora después del pago; luego responde
+ * 404. Sirve al llegar el correo (n8n lo procesa en 1–2 min), no en un reproceso
+ * de horas después, que sigue solo con el correo.
  */
 const consultarWompi = async (transaccion) => {
     if (!/^[0-9A-Za-z-]{5,60}$/.test(String(transaccion || ''))) return null;
