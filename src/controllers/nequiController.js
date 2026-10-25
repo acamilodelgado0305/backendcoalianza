@@ -108,6 +108,32 @@ const buscarLeadPorContacto = async ({ email, telefono }, servicioPreferido = nu
 };
 
 /**
+ * El nombre más completo que haya de esa cédula, entre sus leads y su ficha de
+ * cliente. Hay quien en el segundo examen escribe solo "Ana" después de haber
+ * puesto "Ana Shirley Arenas Arcila" en el primero, y el diploma sale con lo que
+ * diga el lead del curso pagado. Gana el que tenga más palabras (y, si empatan, el
+ * más largo).
+ */
+const nombreMasCompleto = async (nombreLead, documento) => {
+    const filas = await prisma.$queryRaw`
+        SELECT nombre AS completo FROM crm_leads
+        WHERE business_id = ${BUSINESS_ID}
+          AND UPPER(regexp_replace(COALESCE(numero_documento, ''), '[^0-9A-Za-z]', '', 'g')) = ${documento}
+        UNION ALL
+        SELECT CONCAT(nombre, ' ', COALESCE(apellido, '')) FROM personas
+        WHERE business_id = ${BUSINESS_ID}
+          AND UPPER(regexp_replace(COALESCE(numero_documento, ''), '[^0-9A-Za-z]', '', 'g')) = ${documento}
+    `;
+    const limpiar = (n) => String(n || '').trim().split(/\s+/).filter(Boolean).join(' ');
+    const palabras = (n) => (n ? n.split(' ').length : 0);
+    return [nombreLead, ...filas.map((f) => f.completo)]
+        .map(limpiar)
+        .reduce((mejor, n) => (
+            palabras(n) > palabras(mejor) || (palabras(n) === palabras(mejor) && n.length > mejor.length) ? n : mejor
+        ), '') || limpiar(nombreLead);
+};
+
+/**
  * El pago tal como lo ve Wompi: estado real, monto, link (= curso) y el correo y
  * celular que el cliente escribió al pagar. Es la consulta pública por id de
  * transacción (no necesita llaves). Si Wompi no responde devuelve null y el pago
@@ -340,6 +366,8 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         // no con lo que haya escrito en Referencia1.
         const documentoLead = normalizarDocumento(lead.numero_documento);
         if (DOCUMENTO_RE.test(documentoLead)) documento = documentoLead;
+        // Y con su nombre completo, aunque en el lead de este curso lo haya escrito a medias.
+        const nombreCliente = await nombreMasCompleto(lead.nombre, documento);
 
         const item = await prisma.inventario.findFirst({
             where:  { id: inventarioId, business_id: BUSINESS_ID },
@@ -351,7 +379,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         if (item.send_mail && !email) {
             const error = 'El lead no tiene un correo válido para enviar los documentos';
             await finalizar('SIN_CORREO', { lead_id: lead.id, inventario_id: item.id, error });
-            return { referencia, estado: 'SIN_CORREO', documento, lead_id: lead.id, nombre: lead.nombre, detalle: error };
+            return { referencia, estado: 'SIN_CORREO', documento, lead_id: lead.id, nombre: nombreCliente, detalle: error };
         }
 
         // 3. ¿Ya la registraron a mano? Mientras conviven el proceso manual y este,
@@ -369,7 +397,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             if (previa) {
                 const error = `Ya existe la venta #${previa.id} con ese documento y valor`;
                 await finalizar('YA_REGISTRADO', { lead_id: lead.id, inventario_id: item.id, error });
-                return { referencia, estado: 'YA_REGISTRADO', documento, lead_id: lead.id, nombre: lead.nombre, ingreso_id: previa.id, detalle: error };
+                return { referencia, estado: 'YA_REGISTRADO', documento, lead_id: lead.id, nombre: nombreCliente, ingreso_id: previa.id, detalle: error };
             }
         }
 
@@ -382,7 +410,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             const ahora = new Date();
             const vencimiento = new Date(ahora);
             vencimiento.setFullYear(vencimiento.getFullYear() + 1);
-            const [nombre, ...resto] = String(lead.nombre).trim().split(/\s+/);
+            const [nombre, ...resto] = nombreCliente.split(' ');
             const apellido = resto.join(' ');
             const legacyId = uuidv4();
             // Si el lead ya estaba GANADO, Meta ya recibió su Purchase cuando lo marcaron.
@@ -456,6 +484,8 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
                     where: { id: lead.id },
                     data: {
                         estado:     'GANADO',
+                        // El lead queda con el nombre completo que se usó en la venta.
+                        ...(nombreCliente !== lead.nombre && { nombre: nombreCliente.slice(0, 150) }),
                         persona_id: persona?.id ?? lead.persona_id ?? null,
                         notas:      [
                             lead.notas,
@@ -480,7 +510,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         //    si esto se repite, Meta lo deduplica.
         if (capiEstado === 'PENDIENTE') {
             const capi = await sendLeadEvent({
-                lead:      { ...lead, valor_estimado: monto },
+                lead:      { ...lead, nombre: nombreCliente, valor_estimado: monto },
                 eventName: estadoToEventName('GANADO'),
                 servicio:  servicio ?? undefined, // content_ids del curso pagado, no el del lead
                 eventId:   `nequi-${referencia}`,
@@ -494,7 +524,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         if (item.send_mail && !pago.correo_enviado_at) {
             const { endpoint, body } = construirCorreo(
                 item,
-                { nombre: lead.nombre, numeroDocumento: documento, tipoDocumento, email },
+                { nombre: nombreCliente, numeroDocumento: documento, tipoDocumento, email },
                 pago.created_at,
             );
             await enviarCorreoDocumentos(endpoint, body);
@@ -511,7 +541,7 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             estado:     'ENTREGADO',
             documento,
             lead_id:    lead.id,
-            nombre:     lead.nombre,
+            nombre:     nombreCliente,
             ingreso_id: ingresoId,
             producto:   item.nombre,
             valor:      monto,
