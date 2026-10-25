@@ -25,13 +25,23 @@ const CUENTA        = 'Nequi';
 
 // Lo que se cobra por Nequi. Cada curso tiene su propio link de pago (`link`, que
 // llega como prefijo de la referencia de Wompi: "8c4kg6_1792610277_…"); si el link
-// no es uno de estos, el monto decide el curso, como se hacía a mano. Hay clientes
-// con un lead por cada curso, y el del curso pagado es el que pasa a GANADO.
+// no es uno de estos, el monto decide el curso, como se hacía a mano, siempre que
+// ese monto sea de un solo curso. Hay clientes con un lead por cada curso, y el del
+// curso pagado es el que pasa a GANADO.
 // El ítem del inventario decide qué queda en la venta y qué documentos salen por
 // correo (send_mail / plantilla_correo / intensidad_horaria), igual que en el CRM.
+// `compartido`: el link también lo usan otras páginas (el de "Diplomados" está en
+// Limpieza, Bioseguridad y otros cursos), así que solo dice el curso si el lead
+// del cliente es de ese curso.
+// Bodega y Atención al Cliente pasaron a 44.900 con link nuevo (zYOHbK, i4NyQU). Los
+// links de 50.000 se quedan para los pagos que entren por las páginas anteriores
+// (jzJ7MY de Bodega; el de "Diplomados" de Atención).
 const PRODUCTOS_NEQUI = [
     { servicio: 'manipulacion-alimentos', precio: 25000, inventarioId: 2,   link: '8c4kg6' }, // certificado + carnet
+    { servicio: 'auxiliar-bodega',        precio: 44900, inventarioId: 149, link: 'zYOHbK' }, // diploma + certificado
     { servicio: 'auxiliar-bodega',        precio: 50000, inventarioId: 149, link: 'jzJ7MY' }, // diploma + certificado
+    { servicio: 'atencion-cliente',       precio: 44900, inventarioId: 165, link: 'i4NyQU' }, // diploma + certificado
+    { servicio: 'atencion-cliente',       precio: 50000, inventarioId: 165, link: 'rxZMK8', compartido: true }, // diploma + certificado
 ];
 
 const DOCUMENTO_RE  = /^[0-9A-Z]{4,15}$/;
@@ -216,12 +226,12 @@ const construirCorreo = (item, cliente, fechaVenta) => {
 // Idempotente: referencia es UNIQUE y el pago se "reclama" con un UPDATE atómico.
 // Cada paso queda marcado (ingreso_id, capi_estado, correo_enviado_at), así que un
 // reintento solo hace lo que faltó.
-// `forzar` (solo desde el reproceso manual) vuelve a intentar MONTO_DISTINTO y
-// YA_REGISTRADO, y los ENTREGADO a los que les quedó pendiente el Purchase.
+// `forzar` (solo desde el reproceso manual) vuelve a intentar MONTO_DISTINTO,
+// CURSO_DUDOSO y YA_REGISTRADO, y los ENTREGADO a los que les quedó pendiente el Purchase.
 const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
     // PROCESANDO de más de 5 min = un intento que murió a mitad de camino.
     const reintentables = forzar
-        ? Prisma.sql`(estado_proceso IN ('RECIBIDO', 'ERROR', 'SIN_LEAD', 'SIN_CORREO', 'MONTO_DISTINTO', 'YA_REGISTRADO')
+        ? Prisma.sql`(estado_proceso IN ('RECIBIDO', 'ERROR', 'SIN_LEAD', 'SIN_CORREO', 'MONTO_DISTINTO', 'CURSO_DUDOSO', 'YA_REGISTRADO')
                       OR (estado_proceso = 'ENTREGADO' AND capi_estado = 'PENDIENTE'))`
         : Prisma.sql`estado_proceso IN ('RECIBIDO', 'ERROR', 'SIN_LEAD', 'SIN_CORREO')`;
     const [pago] = await prisma.$queryRaw`
@@ -271,7 +281,9 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
         }
 
         // 1. ¿Qué compró? Lo dice el link de pago; si es otro link, el monto (o el
-        //    curso que eligió alguien al reprocesar).
+        //    curso que eligió alguien al reprocesar). Un monto que cuesta más de un
+        //    curso (Bodega y Atención al Cliente valen lo mismo) no se adivina: queda
+        //    para revisar y se reprocesa con el inventario_id del curso.
         const link = wompi?.payment_link_id || String(pago.referencia_nequi || '').split('_')[0];
         const porLink = PRODUCTOS_NEQUI.find((p) => p.link === link);
         if (!pago.inventario_id && porLink && porLink.precio !== monto) {
@@ -279,11 +291,14 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             await finalizar('MONTO_DISTINTO', { error });
             return { referencia, estado: 'MONTO_DISTINTO', documento, valor: monto, detalle: error };
         }
+        const porMonto = PRODUCTOS_NEQUI.filter((p) => p.precio === monto);
         const inventarioId = pago.inventario_id
             ?? porLink?.inventarioId
-            ?? PRODUCTOS_NEQUI.find((p) => p.precio === monto)?.inventarioId;
+            ?? (porMonto.length === 1 ? porMonto[0].inventarioId : undefined);
         if (!inventarioId) {
-            const error = `Monto ${monto} no corresponde a ningún curso`;
+            const error = porMonto.length > 1
+                ? `El monto ${monto} es de varios cursos (${porMonto.map((p) => p.servicio).join(', ')}) y el link de pago no dice cuál`
+                : `Monto ${monto} no corresponde a ningún curso`;
             await finalizar('MONTO_DISTINTO', { error });
             return { referencia, estado: 'MONTO_DISTINTO', documento, valor: monto, detalle: error };
         }
@@ -308,9 +323,19 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
             const error = wompi
                 ? `Sin lead de CertiTec con documento ${documento}, ni con el correo o el celular del pago en Wompi`
                 : `Sin lead de CertiTec con documento ${documento}`;
-            await finalizar('SIN_LEAD', { inventario_id: inventarioId, error });
+            // El curso de un link compartido no está confirmado sin el lead: no se guarda.
+            const inventarioConfirmado = porLink?.compartido && !pago.inventario_id ? undefined : inventarioId;
+            await finalizar('SIN_LEAD', { inventario_id: inventarioConfirmado, error });
             return { referencia, estado: 'SIN_LEAD', documento, valor: monto, detalle: error };
         }
+        // Por un link compartido, un cliente que entró por otro curso pudo pagar ese
+        // otro curso: no se adivina, se elige el curso al reprocesar.
+        if (!pago.inventario_id && porLink?.compartido && lead.servicio !== porLink.servicio) {
+            const error = `Pagó por el link compartido ${porLink.link} y su lead es de ${lead.servicio || 'un curso sin registrar'}, no de ${porLink.servicio}`;
+            await finalizar('CURSO_DUDOSO', { error });
+            return { referencia, estado: 'CURSO_DUDOSO', documento, lead_id: lead.id, nombre: lead.nombre, valor: monto, detalle: error };
+        }
+
         // Con el cliente identificado, la venta y los documentos van con SU cédula,
         // no con lo que haya escrito en Referencia1.
         const documentoLead = normalizarDocumento(lead.numero_documento);
@@ -508,8 +533,8 @@ const procesarPagoNequi = async (referencia, { forzar = false } = {}) => {
 // { referencia, documento, monto, estado, fecha? }
 // `estado` es el "Estado:" del correo de Nequi. Solo APROBADA se procesa: Nequi
 // manda el mismo correo, con monto y Referencia1, también para las RECHAZADAS.
-// Responde 200 con `estado` para todo lo que se pudo decidir (ENTREGADO,
-// YA_PROCESADO, SIN_LEAD, SIN_CORREO, MONTO_DISTINTO, YA_REGISTRADO, NO_APROBADO)
+// Responde 200 con `estado` para todo lo que se pudo decidir (ENTREGADO, YA_PROCESADO,
+// SIN_LEAD, SIN_CORREO, MONTO_DISTINTO, CURSO_DUDOSO, YA_REGISTRADO, NO_APROBADO)
 // y 500 con estado ERROR si algo falló a mitad de camino (reenviarlo retoma lo que faltó).
 export const confirmarPagoNequi = async (req, res) => {
     // Este endpoint entrega certificados: sin clave configurada no se abre.
@@ -567,7 +592,7 @@ export const confirmarPagoNequi = async (req, res) => {
 // ==========================================
 // POST /api/pagos/nequi/reprocesar/:referencia  { documento?, inventario_id? }
 // Para después de revisar un caso: corregir el documento (cliente que escribió mal
-// la cédula en Nequi), elegir el curso de un MONTO_DISTINTO, o entregar un
+// la cédula en Nequi), elegir el curso de un MONTO_DISTINTO o CURSO_DUDOSO, o entregar un
 // YA_REGISTRADO que en realidad era otra compra. Nunca entrega dos veces.
 export const reprocesarPagoNequi = async (req, res) => {
     if (Number(req.user?.bid) !== BUSINESS_ID) {

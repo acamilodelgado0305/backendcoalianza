@@ -73,6 +73,11 @@ const SERVICIOS = {
         categoria: "Cursos",
         valor:     Number(process.env.META_CAPI_VALOR_AUXILIAR_BODEGA) || 0,
     },
+    "atencion-cliente": {
+        nombre:    "Atención al Cliente",
+        categoria: "Cursos",
+        valor:     Number(process.env.META_CAPI_VALOR_ATENCION_CLIENTE) || 0,
+    },
 };
 
 // Slug por defecto para leads que llegan sin 'servicio' (landings viejas que aún
@@ -91,6 +96,9 @@ const ALIAS_SERVICIOS = {
     "manipulacion-alimentos":    "manipulacion-alimentos",
     "auxiliar-de-bodega":        "auxiliar-bodega",
     "auxiliar-bodega":           "auxiliar-bodega",
+    "atencion-al-cliente":       "atencion-cliente",
+    "atencion-cliente":          "atencion-cliente",
+    "servicio-al-cliente":       "atencion-cliente",
 };
 
 /** "Auxiliar de Bodega" / "auxiliar_de_bodega" -> "auxiliar-de-bodega" */
