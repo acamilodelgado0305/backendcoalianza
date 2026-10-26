@@ -396,3 +396,169 @@ model finanzas_config {
 
   @@index([business_id], map: "idx_finanzas_config_business_id")
 }
+
+// ─── TAREAS (tablero tipo Trello) ─── ver prisma/sql/tareas.sql ─────────────
+
+model tareas_tableros {
+  id          Int               @id @default(autoincrement())
+  business_id Int
+  nombre      String            @db.VarChar(120)
+  descripcion String?
+  color       String            @default("#1d4ed8") @db.VarChar(7)
+  icono       String?           @db.VarChar(16)
+  posicion    Float             @default(0)
+  favorito    Boolean           @default(false)
+  archivado   Boolean           @default(false)
+  created_by  Int?
+  created_at  DateTime?         @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?         @default(now()) @db.Timestamptz(6)
+  listas      tareas_listas[]
+  etiquetas   tareas_etiquetas[]
+  tarjetas    tareas_tarjetas[]
+
+  @@index([business_id], map: "idx_tareas_tableros_business")
+}
+
+model tareas_listas {
+  id         Int               @id @default(autoincrement())
+  tablero_id Int
+  nombre     String            @db.VarChar(120)
+  posicion   Float             @default(0)
+  /// Lista de cierre ("✅ Hecho"): lo que entra aquí queda completado
+  es_final   Boolean           @default(false)
+  created_at DateTime?         @default(now()) @db.Timestamptz(6)
+  tablero    tareas_tableros   @relation(fields: [tablero_id], references: [id], onDelete: Cascade)
+  tarjetas   tareas_tarjetas[]
+
+  @@index([tablero_id], map: "idx_tareas_listas_tablero")
+}
+
+model tareas_etiquetas {
+  id         Int                        @id @default(autoincrement())
+  tablero_id Int
+  nombre     String                     @default("") @db.VarChar(60)
+  color      String                     @db.VarChar(7)
+  posicion   Float                      @default(0)
+  created_at DateTime?                  @default(now()) @db.Timestamptz(6)
+  tablero    tareas_tableros            @relation(fields: [tablero_id], references: [id], onDelete: Cascade)
+  tarjetas   tareas_tarjeta_etiquetas[]
+
+  @@index([tablero_id], map: "idx_tareas_etiquetas_tablero")
+}
+
+model tareas_tarjetas {
+  id               Int                        @id @default(autoincrement())
+  tablero_id       Int
+  lista_id         Int
+  titulo           String                     @db.VarChar(500)
+  descripcion      String?
+  posicion         Float                      @default(0)
+  fecha_inicio     DateTime?                  @db.Date
+  /// Sin hora (vence_con_hora = false) se guarda a las 9:00 de Colombia de ese día
+  vence_at         DateTime?                  @db.Timestamptz(6)
+  vence_con_hora   Boolean                    @default(true)
+  /// Minutos antes del vencimiento para avisar al celular (null = sin aviso)
+  recordatorio_min Int?
+  recordado_at     DateTime?                  @db.Timestamptz(6)
+  /// Tarea que se repite: { frecuencia, cada, dias, hasta, lista_id }
+  repeticion       Json?
+  /// Ya se creó la siguiente de la serie
+  repetida_at      DateTime?                  @db.Timestamptz(6)
+  /// id de la primera tarjeta de la serie
+  serie_id         Int?
+  completada       Boolean                    @default(false)
+  completada_at    DateTime?                  @db.Timestamptz(6)
+  archivada        Boolean                    @default(false)
+  created_by       Int?
+  created_by_name  String?                    @db.VarChar(120)
+  created_at       DateTime?                  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?                  @default(now()) @db.Timestamptz(6)
+  tablero          tareas_tableros            @relation(fields: [tablero_id], references: [id], onDelete: Cascade)
+  lista            tareas_listas              @relation(fields: [lista_id], references: [id], onDelete: Cascade)
+  etiquetas        tareas_tarjeta_etiquetas[]
+  subtareas        tareas_subtareas[]
+  comentarios      tareas_comentarios[]
+  adjuntos         tareas_adjuntos[]
+
+  @@index([tablero_id, lista_id], map: "idx_tareas_tarjetas_tablero")
+}
+
+model tareas_tarjeta_etiquetas {
+  tarjeta_id  Int
+  etiqueta_id Int
+  tarjeta     tareas_tarjetas  @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+  etiqueta    tareas_etiquetas @relation(fields: [etiqueta_id], references: [id], onDelete: Cascade)
+
+  @@id([tarjeta_id, etiqueta_id])
+  @@index([etiqueta_id], map: "idx_tareas_tarjeta_etiquetas_etiqueta")
+}
+
+model tareas_subtareas {
+  id         Int             @id @default(autoincrement())
+  tarjeta_id Int
+  texto      String          @db.VarChar(500)
+  hecha      Boolean         @default(false)
+  posicion   Float           @default(0)
+  created_at DateTime?       @default(now()) @db.Timestamptz(6)
+  tarjeta    tareas_tarjetas @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+
+  @@index([tarjeta_id], map: "idx_tareas_subtareas_tarjeta")
+}
+
+model tareas_comentarios {
+  id         Int             @id @default(autoincrement())
+  tarjeta_id Int
+  user_id    Int?
+  user_name  String?         @db.VarChar(120)
+  texto      String
+  created_at DateTime?       @default(now()) @db.Timestamptz(6)
+  updated_at DateTime?       @db.Timestamptz(6)
+  tarjeta    tareas_tarjetas @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+
+  @@index([tarjeta_id], map: "idx_tareas_comentarios_tarjeta")
+}
+
+model tareas_adjuntos {
+  id         Int             @id @default(autoincrement())
+  tarjeta_id Int
+  /// 'archivo' (subido a GCS) | 'enlace'
+  tipo       String          @default("archivo") @db.VarChar(10)
+  nombre     String          @db.VarChar(255)
+  url        String
+  mime       String?         @db.VarChar(100)
+  bytes      Int?
+  created_by Int?
+  created_at DateTime?       @default(now()) @db.Timestamptz(6)
+  tarjeta    tareas_tarjetas @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+
+  @@index([tarjeta_id], map: "idx_tareas_adjuntos_tarjeta")
+}
+
+/// Celulares/navegadores que aceptaron notificaciones (un endpoint por dispositivo)
+model push_suscripciones {
+  id              Int       @id @default(autoincrement())
+  user_id         Int
+  endpoint        String    @unique
+  p256dh          String
+  auth            String
+  dispositivo     String?   @db.VarChar(200)
+  created_at      DateTime? @default(now()) @db.Timestamptz(6)
+  ultimo_envio_at DateTime? @db.Timestamptz(6)
+
+  @@index([user_id], map: "idx_push_suscripciones_user")
+}
+
+/// Qué avisos de Tareas quiere cada usuario en cada negocio
+model tareas_avisos {
+  user_id        Int
+  business_id    Int
+  activo         Boolean   @default(true)
+  resumen_diario Boolean   @default(true)
+  /// Hora de Colombia (0-23) del resumen del día
+  hora_resumen   Int       @default(7) @db.SmallInt
+  ultimo_resumen DateTime? @db.Date
+  created_at     DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime? @default(now()) @db.Timestamptz(6)
+
+  @@id([user_id, business_id])
+}

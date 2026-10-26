@@ -19,6 +19,7 @@ import finanzasRoutes from './routes/finanzasRoutes.js';
 import mercadoPagoRoutes from './routes/mercadoPagoRoutes.js';
 import nequiRoutes from './routes/nequiRoutes.js';
 import publicoRoutes from './routes/publicoRoutes.js';
+import tareasRoutes from './routes/tareasRoutes.js';
 
 dotenv.config();
 
@@ -75,6 +76,7 @@ app.use('/api/finanzas', finanzasRoutes);
 app.use('/api/pagos/mp', mercadoPagoRoutes);
 app.use('/api/pagos/nequi', nequiRoutes); // n8n confirma el pago leyendo el correo de Nequi
 app.use('/api/publico', publicoRoutes); // pedidos y leads desde páginas web de negocios (sin token)
+app.use('/api/tareas', tareasRoutes); // tablero de tareas tipo Trello + avisos al celular
 
 // Conectar a la base de datos
 
