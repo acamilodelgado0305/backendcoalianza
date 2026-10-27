@@ -18,4 +18,18 @@ export const NEGOCIOS_WEB = {
         ],
         maxUnidadesPorProducto: 300,
     },
+    // El Pino Polen · polen de abejas en cápsulas (página: https://elpinofinca.com/polen/)
+    // Envíos a toda Colombia, pago contraentrega.
+    69: {
+        nombre: 'El Pino Polen',
+        usuarioId: 1,
+        productos: [212], // Polen de abejas · 60 cápsulas (precio unitario = monto del inventario)
+        // Deben coincidir con public/assets/js/catalogo.js del sitio
+        paquetes: [
+            { unidades: 2, precio: 109900 },
+            { unidades: 3, precio: 149900 },
+        ],
+        maxUnidadesPorProducto: 12,
+        notaEnvio: 'Envío nacional incluido (gratis). Pago contraentrega: se cobra el total al entregar.',
+    },
 };

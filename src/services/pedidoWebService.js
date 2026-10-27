@@ -136,7 +136,7 @@ export const registrarPedidoWeb = async (tx, businessId, cfg, body) => {
     if (lineasPrecio.length) {
         obs.push(`Precio: ${lineasPrecio.join(' + ')} (lista ${pesos(totalLista)}, ahorro ${pesos(totalLista - total)})`);
     }
-    if (domicilio) obs.push('Domicilio: valor por confirmar (no incluido en el total)');
+    if (domicilio) obs.push(cfg.notaEnvio || 'Domicilio: valor por confirmar (no incluido en el total)');
     const nota = texto(body.nota, 300);
     if (nota) obs.push(`Nota: ${nota}`);
     if (body.origen === 'anuncio') obs.push('Origen: anuncio');

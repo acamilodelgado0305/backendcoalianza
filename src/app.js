@@ -45,6 +45,9 @@ app.use(cors({
     'https://alianzacapacitarte.com',        // apex (redirige a www, por si acaso)
     'https://alianzacapacitarte.vercel.app', // dominio Vercel por defecto / previews
     'https://oble-pedidos.vercel.app',       // Oblé — página de pedidos (POST /api/publico)
+    'https://elpinofinca.com',               // El Pino Polen — tienda (POST /api/publico)
+    'https://www.elpinofinca.com',
+    'https://elpinofinca.vercel.app',
     'http://127.0.0.1:5501'
   ]
 }));
