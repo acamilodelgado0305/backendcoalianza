@@ -16,6 +16,7 @@ const crearRutasCuentas = (controlador) => {
   router.delete('/:id',      controlador.eliminar);
   router.post('/:id/abonar',   controlador.registrarAbono);
   router.post('/:id/aumentar', controlador.aumentarDeuda);
+  router.post('/:id/ajustar-saldo', controlador.ajustarSaldo);
   router.put('/:id/movimientos/:movId', controlador.editarMontoMovimiento);
 
   return router;

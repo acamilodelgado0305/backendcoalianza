@@ -499,6 +499,71 @@ export const crearControladorCuentas = ({ tabla, nombreCol, etiqueta, generaEgre
         }
     };
 
+    // ─── 6b'. AJUSTAR EL SALDO A MANO ─────────────────────────────────────────
+    // Deja el saldo pendiente en el valor que diga el usuario (intereses, multas,
+    // descuentos, un acuerdo con el proveedor...). La diferencia queda como un
+    // cargo `{ tipo: 'ajuste' }` con monto positivo o negativo, así el estado de
+    // cuenta sigue cuadrando (total = base + Σ cargos) sin tocar los abonos.
+    // No genera egresos: es una corrección, no plata que sale.
+    const ajustarSaldo = async (req, res) => {
+        try {
+            const businessId = req.user?.bid;
+            const { id }     = req.params;
+            const { saldo, nota } = req.body;
+
+            const saldoNum = round2(Number(saldo));
+            if (saldo === null || saldo === undefined || saldo === '' || !Number.isFinite(saldoNum) || saldoNum < 0) {
+                return res.status(400).json({ message: 'El nuevo saldo debe ser 0 o mayor' });
+            }
+
+            const cuentaActualizada = await prisma.$transaction(async (tx) => {
+                const [prev] = await tx.$queryRaw(Prisma.sql`
+                    SELECT * FROM ${T}
+                    WHERE id = ${Number(id)} AND business_id = ${businessId}
+                `);
+                if (!prev) throw noEncontrada();
+                if (prev.estado === 'ANULADA') throw Object.assign(new Error('La cuenta está anulada'), { status: 400 });
+
+                const totalAbonado = round2(Number(prev.total_abonado || 0));
+                const saldoAnt     = round2(Number(prev.total || 0) - totalAbonado);
+                const diferencia   = round2(saldoNum - saldoAnt);
+                if (diferencia === 0) throw Object.assign(new Error('El saldo ya tiene ese valor'), { status: 400 });
+
+                const cargosNuevos = [...parseArr(prev.cargos), {
+                    id:     uuidv4(),
+                    tipo:   'ajuste',
+                    fecha:  new Date().toISOString(),
+                    monto:  diferencia,
+                    saldo_anterior: saldoAnt,
+                    nota:   nota || null,
+                }];
+
+                const nuevoTotal  = round2(totalAbonado + saldoNum);
+                const nuevoEstado = saldoNum <= 0 ? 'PAGADA' : (totalAbonado > 0 ? 'ABONO' : 'PENDIENTE');
+                const fechaPago   = nuevoEstado === 'PAGADA' ? (prev.fecha_pago || hoyDateOnly()) : null;
+
+                await tx.$executeRaw(Prisma.sql`
+                    UPDATE ${T} SET
+                        cargos     = ${JSON.stringify(cargosNuevos)}::jsonb,
+                        total      = ${nuevoTotal},
+                        estado     = ${nuevoEstado},
+                        fecha_pago = ${dateOnlyStr(fechaPago)}::date,
+                        updated_at = NOW()
+                    WHERE id = ${Number(id)}
+                `);
+
+                const [updated] = await tx.$queryRaw(Prisma.sql`SELECT * FROM ${T} WHERE id = ${Number(id)}`);
+                return updated;
+            });
+
+            return res.status(200).json(serializeCuenta(cuentaActualizada));
+        } catch (err) {
+            console.error(`ajustarSaldo [${tabla}]:`, err);
+            const status = err.status || 500;
+            return res.status(status).json({ message: err.message || 'Error al ajustar el saldo' });
+        }
+    };
+
     // ─── 6c. EDITAR EL MONTO DE UN MOVIMIENTO ─────────────────────────────────
     // Corrige el valor de una línea del estado de cuenta sin tener que borrar y rehacer:
     //   movId = 'inicial'  -> monto base (total menos los aumentos)
@@ -537,6 +602,10 @@ export const crearControladorCuentas = ({ tabla, nombreCol, etiqueta, generaEgre
                     const cargo = cargos.find((c) => String(c.id) === String(movId));
                     const abono = abonos.find((a) => String(a.id) === String(movId));
 
+                    // Un ajuste se corrige con otro ajuste de saldo (puede ser negativo).
+                    if (cargo?.tipo === 'ajuste') {
+                        throw Object.assign(new Error('Los ajustes de saldo no se editan: haz un nuevo ajuste'), { status: 400 });
+                    }
                     if (cargo)      { cargo.monto = round2(montoNum); cargoEditado = cargo; }
                     else if (abono) abono.monto = round2(montoNum);
                     else throw Object.assign(new Error('Movimiento no encontrado'), { status: 404 });
@@ -679,6 +748,6 @@ export const crearControladorCuentas = ({ tabla, nombreCol, etiqueta, generaEgre
 
     return {
         crear, listar, obtener, actualizar, eliminar,
-        registrarAbono, aumentarDeuda, editarMontoMovimiento, estadisticas,
+        registrarAbono, aumentarDeuda, ajustarSaldo, editarMontoMovimiento, estadisticas,
     };
 };
