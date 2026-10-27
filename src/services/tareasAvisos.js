@@ -4,7 +4,7 @@
 // POST /api/tareas/avisos/procesar, ver tareasRoutes.js):
 //  1. Recordatorio de una tarjeta: X minutos antes de que venza.
 //  2. Resumen del día: a la hora elegida (7 a. m. por defecto), lo vencido y
-//     lo que vence hoy en cada negocio.
+//     lo que vence hoy en todos los proyectos del usuario.
 //
 // Los dos son idempotentes: la fila se marca (recordado_at / ultimo_resumen)
 // en el mismo UPDATE que la elige, así que dos crons a la vez nunca mandan el
@@ -34,14 +34,13 @@ export const describirVence = (vence, conHora, ahora = new Date()) => {
     return `Vence ${cuando} a las ${horaCO(fecha)}`;
 };
 
-const urlTarjeta = (t) => `/inicio/tareas?tablero=${t.tablero_id}&tarjeta=${t.id}&negocio=${t.business_id}`;
+const urlTarjeta = (t) => `/inicio/tareas?tablero=${t.tablero_id}&tarjeta=${t.id}`;
 
-const destinatarios = async (businessId) => {
-    const filas = await prisma.tareas_avisos.findMany({
-        where: { business_id: businessId, activo: true },
-        select: { user_id: true },
-    });
-    return filas.map((f) => f.user_id);
+// Las tareas son de cada usuario: el aviso va solo a su dueño, si tiene los
+// avisos encendidos.
+const avisosActivos = async (userId) => {
+    const fila = await prisma.tareas_avisos.findUnique({ where: { user_id: userId }, select: { activo: true } });
+    return !!fila?.activo;
 };
 
 const enviarRecordatorios = async () => {
@@ -59,13 +58,14 @@ const enviarRecordatorios = async () => {
            AND c.vence_at - make_interval(mins => c.recordatorio_min) <= now()
            AND c.vence_at > now() - interval '12 hours'
      RETURNING c.id, c.tablero_id, c.titulo, c.vence_at, c.vence_con_hora,
-               t.business_id, t.nombre AS tablero, t.icono`;
+               t.user_id, t.nombre AS tablero, t.icono`;
 
     let enviados = 0;
-    const porNegocio = new Map();
+    const activos = new Map();
     for (const t of tarjetas) {
-        if (!porNegocio.has(t.business_id)) porNegocio.set(t.business_id, await destinatarios(t.business_id));
-        const r = await enviarPushAUsuarios(porNegocio.get(t.business_id), {
+        if (!activos.has(t.user_id)) activos.set(t.user_id, await avisosActivos(t.user_id));
+        if (!activos.get(t.user_id)) continue;
+        const r = await enviarPushAUsuarios([t.user_id], {
             title: `⏰ ${t.titulo}`,
             body: `${describirVence(t.vence_at, t.vence_con_hora)} · ${t.icono ? `${t.icono} ` : ''}${t.tablero}`,
             url: urlTarjeta(t),
@@ -85,10 +85,10 @@ const enviarResumenes = async () => {
          WHERE a.activo AND a.resumen_diario
            AND EXTRACT(HOUR FROM now() AT TIME ZONE 'America/Bogota') BETWEEN a.hora_resumen AND a.hora_resumen + 2
            AND (a.ultimo_resumen IS NULL OR a.ultimo_resumen < (now() AT TIME ZONE 'America/Bogota')::date)
-     RETURNING a.user_id, a.business_id`;
+     RETURNING a.user_id`;
 
     let enviados = 0;
-    for (const { user_id, business_id } of elegidos) {
+    for (const { user_id } of elegidos) {
         const pendientes = await prisma.$queryRaw`
             SELECT c.id, c.titulo,
                    CASE WHEN c.vence_con_hora THEN c.vence_at < now()
@@ -96,7 +96,7 @@ const enviarResumenes = async () => {
                    END AS vencida
               FROM tareas_tarjetas c
               JOIN tareas_tableros t ON t.id = c.tablero_id
-             WHERE t.business_id = ${business_id} AND NOT t.archivado
+             WHERE t.user_id = ${user_id} AND NOT t.archivado
                AND NOT c.completada AND NOT c.archivada
                AND c.vence_at IS NOT NULL
                AND (c.vence_at AT TIME ZONE 'America/Bogota')::date <= (now() AT TIME ZONE 'America/Bogota')::date
@@ -115,8 +115,8 @@ const enviarResumenes = async () => {
         const r = await enviarPushAUsuarios([user_id], {
             title: `☀️ Tu día: ${partes.join(' y ')}`,
             body: pendientes.length > 3 ? `${titulos} y ${pendientes.length - 3} más` : titulos,
-            url: `/inicio/tareas?negocio=${business_id}`,
-            tag: `resumen-${business_id}`,
+            url: '/inicio/tareas',
+            tag: 'resumen',
         });
         enviados += r.enviados;
     }

@@ -6,8 +6,9 @@
 // lleva etiquetas del proyecto, subtareas, comentarios, adjuntos y una fecha de
 // vencimiento con recordatorio al celular (ver services/tareasAvisos.js).
 //
-// Todo es del negocio activo (`req.user.bid`): cada consulta confirma que el
-// tablero pertenece a ese negocio antes de leer o tocar algo.
+// Todo es del USUARIO (`req.user.id`), no del negocio: sus proyectos se ven
+// en cualquier negocio en que esté y nadie más los ve. Cada consulta confirma
+// que el tablero es suyo antes de leer o tocar algo.
 //
 // Orden: listas, tarjetas, subtareas y proyectos guardan una `posicion`
 // decimal. Mover algo = ponerle el promedio de sus dos vecinos, sin reescribir
@@ -48,14 +49,14 @@ const texto = (v, max) => (v === undefined ? undefined : String(v ?? '').trim().
 class ErrorTareas extends Error {
     constructor(status, message) { super(message); this.status = status; }
 }
-const noEncontrado = (que) => new ErrorTareas(404, `${que} no existe o no es de este negocio`);
+const noEncontrado = (que) => new ErrorTareas(404, `${que} no existe o no es tuyo`);
 
-// Envuelve cada handler: un solo lugar para el 400 sin negocio y los errores.
+// Envuelve cada handler: un solo lugar para la sesión sin usuario y los errores.
 const handler = (fn) => async (req, res) => {
     try {
-        const businessId = Number(req.user?.bid);
-        if (!businessId) return res.status(400).json({ message: 'No hay un negocio activo en la sesión' });
-        await fn(req, res, businessId);
+        const duenoId = Number(req.user?.id);
+        if (!duenoId) return res.status(401).json({ message: 'Sesión sin usuario' });
+        await fn(req, res, duenoId);
     } catch (error) {
         if (error instanceof ErrorTareas) return res.status(error.status).json({ message: error.message });
         console.error('[tareas]', req.method, req.originalUrl, error);
@@ -69,20 +70,20 @@ const idParam = (req, nombre = 'id') => {
     return n;
 };
 
-// ─── Pertenencia al negocio ──────────────────────────────────────────────────
-const tableroDelNegocio = async (id, businessId) => {
-    const t = await prisma.tareas_tableros.findFirst({ where: { id, business_id: businessId } });
+// ─── Pertenencia al usuario ──────────────────────────────────────────────────
+const tableroDelUsuario = async (id, duenoId) => {
+    const t = await prisma.tareas_tableros.findFirst({ where: { id, user_id: duenoId } });
     if (!t) throw noEncontrado('El proyecto');
     return t;
 };
-const listaDelNegocio = async (id, businessId) => {
-    const l = await prisma.tareas_listas.findFirst({ where: { id, tablero: { business_id: businessId } } });
+const listaDelUsuario = async (id, duenoId) => {
+    const l = await prisma.tareas_listas.findFirst({ where: { id, tablero: { user_id: duenoId } } });
     if (!l) throw noEncontrado('La lista');
     return l;
 };
-const tarjetaDelNegocio = async (id, businessId) => {
+const tarjetaDelUsuario = async (id, duenoId) => {
     const c = await prisma.tareas_tarjetas.findFirst({
-        where: { id, tablero: { business_id: businessId } },
+        where: { id, tablero: { user_id: duenoId } },
         include: { lista: true },
     });
     if (!c) throw noEncontrado('La tarjeta');
@@ -197,7 +198,7 @@ const serializarPorId = async (id) => {
 
 // ═════════════════════════════ PROYECTOS ═════════════════════════════════════
 
-export const listarTableros = handler(async (req, res, businessId) => {
+export const listarTableros = handler(async (req, res, duenoId) => {
     const archivados = req.query.archivados === '1';
     const filas = await prisma.$queryRaw`
         SELECT t.id, t.nombre, t.descripcion, t.color, t.icono, t.posicion, t.favorito, t.archivado,
@@ -211,21 +212,22 @@ export const listarTableros = handler(async (req, res, businessId) => {
                MAX(c.updated_at)                                                                 AS ultima_actividad
           FROM tareas_tableros t
           LEFT JOIN tareas_tarjetas c ON c.tablero_id = t.id
-         WHERE t.business_id = ${businessId} AND t.archivado = ${archivados}
+         WHERE t.user_id = ${duenoId} AND t.archivado = ${archivados}
          GROUP BY t.id
          ORDER BY t.favorito DESC, t.posicion ASC, t.id ASC`;
     res.json(filas);
 });
 
-export const crearTablero = handler(async (req, res, businessId) => {
+export const crearTablero = handler(async (req, res, duenoId) => {
     const nombre = texto(req.body.nombre, 120);
     if (!nombre) throw new ErrorTareas(400, 'El proyecto necesita un nombre');
     const listas = PLANTILLAS[req.body.plantilla] ?? PLANTILLAS.flujo;
-    const posicion = await reubicar('tareas_tableros', { business_id: businessId }, null, undefined);
+    const posicion = await reubicar('tareas_tableros', { user_id: duenoId }, null, undefined);
 
     const tablero = await prisma.tareas_tableros.create({
         data: {
-            business_id: businessId,
+            user_id: duenoId,
+            business_id: Number(req.user.bid) || null,
             nombre,
             descripcion: texto(req.body.descripcion, 2000) || null,
             color: limpiarColor(req.body.color, '#1d4ed8'),
@@ -239,8 +241,8 @@ export const crearTablero = handler(async (req, res, businessId) => {
     res.status(201).json(tablero);
 });
 
-export const obtenerTablero = handler(async (req, res, businessId) => {
-    const tablero = await tableroDelNegocio(idParam(req), businessId);
+export const obtenerTablero = handler(async (req, res, duenoId) => {
+    const tablero = await tableroDelUsuario(idParam(req), duenoId);
     const [listas, etiquetas, tarjetas] = await Promise.all([
         prisma.tareas_listas.findMany({ where: { tablero_id: tablero.id }, orderBy: [{ posicion: 'asc' }, { id: 'asc' }] }),
         prisma.tareas_etiquetas.findMany({ where: { tablero_id: tablero.id }, orderBy: [{ posicion: 'asc' }, { id: 'asc' }] }),
@@ -253,8 +255,8 @@ export const obtenerTablero = handler(async (req, res, businessId) => {
     res.json({ tablero, listas, etiquetas, tarjetas: tarjetas.map(serializarTarjeta) });
 });
 
-export const actualizarTablero = handler(async (req, res, businessId) => {
-    const t = await tableroDelNegocio(idParam(req), businessId);
+export const actualizarTablero = handler(async (req, res, duenoId) => {
+    const t = await tableroDelUsuario(idParam(req), duenoId);
     const data = { updated_at: new Date() };
     if (req.body.nombre !== undefined) {
         data.nombre = texto(req.body.nombre, 120);
@@ -268,16 +270,16 @@ export const actualizarTablero = handler(async (req, res, businessId) => {
     res.json(await prisma.tareas_tableros.update({ where: { id: t.id }, data }));
 });
 
-export const moverTablero = handler(async (req, res, businessId) => {
-    const t = await tableroDelNegocio(idParam(req), businessId);
-    const posicion = await reubicar('tareas_tableros', { business_id: businessId }, t.id, req.body.despues_de ?? null);
+export const moverTablero = handler(async (req, res, duenoId) => {
+    const t = await tableroDelUsuario(idParam(req), duenoId);
+    const posicion = await reubicar('tareas_tableros', { user_id: duenoId }, t.id, req.body.despues_de ?? null);
     res.json(await prisma.tareas_tableros.update({ where: { id: t.id }, data: { posicion } }));
 });
 
 // Borrar es definitivo: solo se permite con el proyecto ya archivado, para que
 // nunca se pierda un proyecto de un toque.
-export const eliminarTablero = handler(async (req, res, businessId) => {
-    const t = await tableroDelNegocio(idParam(req), businessId);
+export const eliminarTablero = handler(async (req, res, duenoId) => {
+    const t = await tableroDelUsuario(idParam(req), duenoId);
     if (!t.archivado) throw new ErrorTareas(400, 'Primero archiva el proyecto; luego lo puedes eliminar');
     const archivos = await prisma.tareas_adjuntos.findMany({
         where: { tipo: 'archivo', tarjeta: { tablero_id: t.id } }, select: { url: true },
@@ -289,8 +291,8 @@ export const eliminarTablero = handler(async (req, res, businessId) => {
 
 // ═════════════════════════════ LISTAS ════════════════════════════════════════
 
-export const crearLista = handler(async (req, res, businessId) => {
-    const t = await tableroDelNegocio(idParam(req), businessId);
+export const crearLista = handler(async (req, res, duenoId) => {
+    const t = await tableroDelUsuario(idParam(req), duenoId);
     const nombre = texto(req.body.nombre, 120);
     if (!nombre) throw new ErrorTareas(400, 'La lista necesita un nombre');
     const posicion = await reubicar('tareas_listas', { tablero_id: t.id }, null, req.body.despues_de);
@@ -299,8 +301,8 @@ export const crearLista = handler(async (req, res, businessId) => {
     }));
 });
 
-export const actualizarLista = handler(async (req, res, businessId) => {
-    const l = await listaDelNegocio(idParam(req), businessId);
+export const actualizarLista = handler(async (req, res, duenoId) => {
+    const l = await listaDelUsuario(idParam(req), duenoId);
     const data = {};
     if (req.body.nombre !== undefined) {
         data.nombre = texto(req.body.nombre, 120);
@@ -318,19 +320,19 @@ export const actualizarLista = handler(async (req, res, businessId) => {
     res.json(lista);
 });
 
-export const moverLista = handler(async (req, res, businessId) => {
-    const l = await listaDelNegocio(idParam(req), businessId);
+export const moverLista = handler(async (req, res, duenoId) => {
+    const l = await listaDelUsuario(idParam(req), duenoId);
     const posicion = await reubicar('tareas_listas', { tablero_id: l.tablero_id }, l.id, req.body.despues_de ?? null);
     res.json(await prisma.tareas_listas.update({ where: { id: l.id }, data: { posicion } }));
 });
 
 // ?mover_a=ID pasa las tarjetas a esa lista (al final) antes de borrar; sin él,
 // las tarjetas se borran con la lista.
-export const eliminarLista = handler(async (req, res, businessId) => {
-    const l = await listaDelNegocio(idParam(req), businessId);
+export const eliminarLista = handler(async (req, res, duenoId) => {
+    const l = await listaDelUsuario(idParam(req), duenoId);
     const destinoId = Number(req.query.mover_a) || null;
     if (destinoId) {
-        const destino = await listaDelNegocio(destinoId, businessId);
+        const destino = await listaDelUsuario(destinoId, duenoId);
         if (destino.id === l.id || destino.tablero_id !== l.tablero_id) throw new ErrorTareas(400, 'Lista de destino inválida');
         const tarjetas = await prisma.tareas_tarjetas.findMany({
             where: { lista_id: l.id }, orderBy: [{ posicion: 'asc' }, { id: 'asc' }], select: { id: true },
@@ -356,8 +358,8 @@ export const eliminarLista = handler(async (req, res, businessId) => {
 
 // ═════════════════════════════ ETIQUETAS ═════════════════════════════════════
 
-export const crearEtiqueta = handler(async (req, res, businessId) => {
-    const t = await tableroDelNegocio(idParam(req), businessId);
+export const crearEtiqueta = handler(async (req, res, duenoId) => {
+    const t = await tableroDelUsuario(idParam(req), duenoId);
     const posicion = await reubicar('tareas_etiquetas', { tablero_id: t.id }, null, undefined);
     res.status(201).json(await prisma.tareas_etiquetas.create({
         data: {
@@ -369,8 +371,8 @@ export const crearEtiqueta = handler(async (req, res, businessId) => {
     }));
 });
 
-export const actualizarEtiqueta = handler(async (req, res, businessId) => {
-    const e = await prisma.tareas_etiquetas.findFirst({ where: { id: idParam(req), tablero: { business_id: businessId } } });
+export const actualizarEtiqueta = handler(async (req, res, duenoId) => {
+    const e = await prisma.tareas_etiquetas.findFirst({ where: { id: idParam(req), tablero: { user_id: duenoId } } });
     if (!e) throw noEncontrado('La etiqueta');
     const data = {};
     if (req.body.nombre !== undefined) data.nombre = texto(req.body.nombre, 60) || '';
@@ -378,8 +380,8 @@ export const actualizarEtiqueta = handler(async (req, res, businessId) => {
     res.json(await prisma.tareas_etiquetas.update({ where: { id: e.id }, data }));
 });
 
-export const eliminarEtiqueta = handler(async (req, res, businessId) => {
-    const e = await prisma.tareas_etiquetas.findFirst({ where: { id: idParam(req), tablero: { business_id: businessId } } });
+export const eliminarEtiqueta = handler(async (req, res, duenoId) => {
+    const e = await prisma.tareas_etiquetas.findFirst({ where: { id: idParam(req), tablero: { user_id: duenoId } } });
     if (!e) throw noEncontrado('La etiqueta');
     await prisma.tareas_etiquetas.delete({ where: { id: e.id } });
     res.json({ ok: true });
@@ -413,8 +415,8 @@ const leerTarjetaCompleta = async (id) => {
     return { ...serializarTarjeta(c), lista_subtareas: subtareas, lista_comentarios: comentarios, lista_adjuntos: adjuntos };
 };
 
-export const crearTarjeta = handler(async (req, res, businessId) => {
-    const lista = await listaDelNegocio(idParam(req), businessId);
+export const crearTarjeta = handler(async (req, res, duenoId) => {
+    const lista = await listaDelUsuario(idParam(req), duenoId);
     const titulo = texto(req.body.titulo, 500);
     if (!titulo) throw new ErrorTareas(400, 'La tarjeta necesita un título');
 
@@ -445,13 +447,13 @@ export const crearTarjeta = handler(async (req, res, businessId) => {
     res.status(201).json(serializarTarjeta(tarjeta));
 });
 
-export const obtenerTarjeta = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const obtenerTarjeta = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     res.json(await leerTarjetaCompleta(c.id));
 });
 
-export const actualizarTarjeta = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const actualizarTarjeta = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     const b = req.body;
     const data = { updated_at: new Date() };
 
@@ -502,12 +504,12 @@ export const actualizarTarjeta = handler(async (req, res, businessId) => {
     res.json({ ...(await leerTarjetaCompleta(c.id)), siguiente: await serializarPorId(siguiente?.id) });
 });
 
-// Mover a otra lista (del mismo u otro proyecto del negocio) y/o reordenar.
+// Mover a otra lista (del mismo u otro proyecto del usuario) y/o reordenar.
 // body: { lista_id, despues_de } — despues_de = id de la tarjeta que queda
 // justo encima (null = arriba del todo).
-export const moverTarjeta = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
-    const destino = req.body.lista_id ? await listaDelNegocio(Number(req.body.lista_id), businessId) : c.lista;
+export const moverTarjeta = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
+    const destino = req.body.lista_id ? await listaDelUsuario(Number(req.body.lista_id), duenoId) : c.lista;
     const posicion = await reubicar('tareas_tarjetas', { lista_id: destino.id, archivada: false }, c.id, req.body.despues_de ?? null);
 
     const data = { lista_id: destino.id, tablero_id: destino.tablero_id, posicion, updated_at: new Date() };
@@ -545,8 +547,8 @@ export const moverTarjeta = handler(async (req, res, businessId) => {
     res.json({ ...serializarTarjeta(tarjeta), siguiente: await serializarPorId(siguiente?.id) });
 });
 
-export const copiarTarjeta = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const copiarTarjeta = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     const [etiquetas, subtareas] = await Promise.all([
         prisma.tareas_tarjeta_etiquetas.findMany({ where: { tarjeta_id: c.id } }),
         prisma.tareas_subtareas.findMany({ where: { tarjeta_id: c.id }, orderBy: [{ posicion: 'asc' }, { id: 'asc' }] }),
@@ -569,19 +571,19 @@ export const copiarTarjeta = handler(async (req, res, businessId) => {
     res.status(201).json(serializarTarjeta(copia));
 });
 
-export const eliminarTarjeta = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const eliminarTarjeta = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     const archivos = await prisma.tareas_adjuntos.findMany({ where: { tarjeta_id: c.id, tipo: 'archivo' }, select: { url: true } });
     await prisma.tareas_tarjetas.delete({ where: { id: c.id } });
     await Promise.all(archivos.map((a) => deleteComprobanteFromGCS(a.url)));
     res.json({ ok: true });
 });
 
-// Todas las tarjetas del negocio (vista "Todas las tareas", agenda, búsqueda).
+// Todas las tarjetas del usuario (vista "Todas las tareas", agenda, búsqueda).
 // ?q= busca en título y descripción; ?estado=pendientes|completadas|todas;
 // ?tablero_id= limita a un proyecto.
-export const listarTarjetas = handler(async (req, res, businessId) => {
-    const where = { archivada: false, tablero: { business_id: businessId, archivado: false } };
+export const listarTarjetas = handler(async (req, res, duenoId) => {
+    const where = { archivada: false, tablero: { user_id: duenoId, archivado: false } };
     const estado = req.query.estado || 'todas';
     if (estado === 'pendientes') where.completada = false;
     if (estado === 'completadas') where.completada = true;
@@ -614,8 +616,8 @@ export const listarTarjetas = handler(async (req, res, businessId) => {
 // ═════════════════════════════ SUBTAREAS ═════════════════════════════════════
 
 // Varias líneas = varias subtareas (pegar una lista de pasos de una vez).
-export const crearSubtareas = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const crearSubtareas = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     const lineas = String(req.body.texto || '')
         .split(/\r?\n/)
         .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[\s?[xX ]?\])\s*/, '').trim())
@@ -630,14 +632,14 @@ export const crearSubtareas = handler(async (req, res, businessId) => {
     res.status(201).json(await prisma.tareas_subtareas.findMany({ where: { tarjeta_id: c.id }, orderBy: [{ posicion: 'asc' }, { id: 'asc' }] }));
 });
 
-const subtareaDelNegocio = async (id, businessId) => {
-    const s = await prisma.tareas_subtareas.findFirst({ where: { id, tarjeta: { tablero: { business_id: businessId } } } });
+const subtareaDelUsuario = async (id, duenoId) => {
+    const s = await prisma.tareas_subtareas.findFirst({ where: { id, tarjeta: { tablero: { user_id: duenoId } } } });
     if (!s) throw noEncontrado('La subtarea');
     return s;
 };
 
-export const actualizarSubtarea = handler(async (req, res, businessId) => {
-    const s = await subtareaDelNegocio(idParam(req), businessId);
+export const actualizarSubtarea = handler(async (req, res, duenoId) => {
+    const s = await subtareaDelUsuario(idParam(req), duenoId);
     const data = {};
     if (req.body.texto !== undefined) {
         data.texto = texto(req.body.texto, 500);
@@ -649,22 +651,22 @@ export const actualizarSubtarea = handler(async (req, res, businessId) => {
     res.json(sub);
 });
 
-export const moverSubtarea = handler(async (req, res, businessId) => {
-    const s = await subtareaDelNegocio(idParam(req), businessId);
+export const moverSubtarea = handler(async (req, res, duenoId) => {
+    const s = await subtareaDelUsuario(idParam(req), duenoId);
     const posicion = await reubicar('tareas_subtareas', { tarjeta_id: s.tarjeta_id }, s.id, req.body.despues_de ?? null);
     res.json(await prisma.tareas_subtareas.update({ where: { id: s.id }, data: { posicion } }));
 });
 
-export const eliminarSubtarea = handler(async (req, res, businessId) => {
-    const s = await subtareaDelNegocio(idParam(req), businessId);
+export const eliminarSubtarea = handler(async (req, res, duenoId) => {
+    const s = await subtareaDelUsuario(idParam(req), duenoId);
     await prisma.tareas_subtareas.delete({ where: { id: s.id } });
     res.json({ ok: true });
 });
 
 // Convierte una subtarea en tarjeta propia, en la misma lista (debajo).
-export const subtareaATarjeta = handler(async (req, res, businessId) => {
-    const s = await subtareaDelNegocio(idParam(req), businessId);
-    const c = await tarjetaDelNegocio(s.tarjeta_id, businessId);
+export const subtareaATarjeta = handler(async (req, res, duenoId) => {
+    const s = await subtareaDelUsuario(idParam(req), duenoId);
+    const c = await tarjetaDelUsuario(s.tarjeta_id, duenoId);
     const posicion = await reubicar('tareas_tarjetas', { lista_id: c.lista_id, archivada: false }, null, c.id);
     const nueva = await prisma.tareas_tarjetas.create({
         data: {
@@ -680,8 +682,8 @@ export const subtareaATarjeta = handler(async (req, res, businessId) => {
 
 // ═════════════════════════════ COMENTARIOS ═══════════════════════════════════
 
-export const crearComentario = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const crearComentario = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     const cuerpo = texto(req.body.texto, 10000);
     if (!cuerpo) throw new ErrorTareas(400, 'Escribe el comentario');
     const comentario = await prisma.tareas_comentarios.create({
@@ -691,8 +693,8 @@ export const crearComentario = handler(async (req, res, businessId) => {
     res.status(201).json(comentario);
 });
 
-const comentarioPropio = async (req, businessId) => {
-    const m = await prisma.tareas_comentarios.findFirst({ where: { id: idParam(req), tarjeta: { tablero: { business_id: businessId } } } });
+const comentarioPropio = async (req, duenoId) => {
+    const m = await prisma.tareas_comentarios.findFirst({ where: { id: idParam(req), tarjeta: { tablero: { user_id: duenoId } } } });
     if (!m) throw noEncontrado('El comentario');
     if (m.user_id && Number(m.user_id) !== Number(req.user.id) && !['admin', 'superadmin'].includes(req.user.role)) {
         throw new ErrorTareas(403, 'Solo quien escribió el comentario puede cambiarlo');
@@ -700,24 +702,24 @@ const comentarioPropio = async (req, businessId) => {
     return m;
 };
 
-export const actualizarComentario = handler(async (req, res, businessId) => {
-    const m = await comentarioPropio(req, businessId);
+export const actualizarComentario = handler(async (req, res, duenoId) => {
+    const m = await comentarioPropio(req, duenoId);
     const cuerpo = texto(req.body.texto, 10000);
     if (!cuerpo) throw new ErrorTareas(400, 'El comentario no puede quedar vacío');
     res.json(await prisma.tareas_comentarios.update({ where: { id: m.id }, data: { texto: cuerpo, updated_at: new Date() } }));
 });
 
-export const eliminarComentario = handler(async (req, res, businessId) => {
-    const m = await comentarioPropio(req, businessId);
+export const eliminarComentario = handler(async (req, res, duenoId) => {
+    const m = await comentarioPropio(req, duenoId);
     await prisma.tareas_comentarios.delete({ where: { id: m.id } });
     res.json({ ok: true });
 });
 
 // ═════════════════════════════ ADJUNTOS ══════════════════════════════════════
 
-export const subirAdjunto = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
-    const url = await uploadComprobanteToGCS(req.file, { businessId, tipo: 'tareas' });
+export const subirAdjunto = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
+    const url = await uploadComprobanteToGCS(req.file, { businessId: `usuario-${duenoId}`, tipo: 'tareas' });
     const nombre = Buffer.from(req.file.originalname || 'archivo', 'latin1').toString('utf8').slice(0, 255);
     const adjunto = await prisma.tareas_adjuntos.create({
         data: {
@@ -729,8 +731,8 @@ export const subirAdjunto = handler(async (req, res, businessId) => {
     res.status(201).json(adjunto);
 });
 
-export const agregarEnlace = handler(async (req, res, businessId) => {
-    const c = await tarjetaDelNegocio(idParam(req), businessId);
+export const agregarEnlace = handler(async (req, res, duenoId) => {
+    const c = await tarjetaDelUsuario(idParam(req), duenoId);
     let url;
     try {
         const crudo = String(req.body.url || '').trim();
@@ -749,8 +751,8 @@ export const agregarEnlace = handler(async (req, res, businessId) => {
     res.status(201).json(adjunto);
 });
 
-export const eliminarAdjunto = handler(async (req, res, businessId) => {
-    const a = await prisma.tareas_adjuntos.findFirst({ where: { id: idParam(req), tarjeta: { tablero: { business_id: businessId } } } });
+export const eliminarAdjunto = handler(async (req, res, duenoId) => {
+    const a = await prisma.tareas_adjuntos.findFirst({ where: { id: idParam(req), tarjeta: { tablero: { user_id: duenoId } } } });
     if (!a) throw noEncontrado('El adjunto');
     await prisma.tareas_adjuntos.delete({ where: { id: a.id } });
     if (a.tipo === 'archivo') await deleteComprobanteFromGCS(a.url);
@@ -760,9 +762,9 @@ export const eliminarAdjunto = handler(async (req, res, businessId) => {
 // ═════════════════════════════ AVISOS AL CELULAR ═════════════════════════════
 
 const HORA_DEFAULT = 7;
-const configAvisos = async (userId, businessId) => {
+const configAvisos = async (userId) => {
     const [fila, dispositivos] = await Promise.all([
-        prisma.tareas_avisos.findUnique({ where: { user_id_business_id: { user_id: userId, business_id: businessId } } }),
+        prisma.tareas_avisos.findUnique({ where: { user_id: userId } }),
         prisma.push_suscripciones.count({ where: { user_id: userId } }),
     ]);
     return {
@@ -775,12 +777,11 @@ const configAvisos = async (userId, businessId) => {
     };
 };
 
-export const obtenerAvisos = handler(async (req, res, businessId) => {
-    res.json(await configAvisos(Number(req.user.id), businessId));
+export const obtenerAvisos = handler(async (req, res, duenoId) => {
+    res.json(await configAvisos(duenoId));
 });
 
-export const actualizarAvisos = handler(async (req, res, businessId) => {
-    const userId = Number(req.user.id);
+export const actualizarAvisos = handler(async (req, res, userId) => {
     const data = { updated_at: new Date() };
     if (req.body.activo !== undefined) data.activo = !!req.body.activo;
     if (req.body.resumen_diario !== undefined) data.resumen_diario = !!req.body.resumen_diario;
@@ -790,17 +791,16 @@ export const actualizarAvisos = handler(async (req, res, businessId) => {
         data.hora_resumen = h;
     }
     await prisma.tareas_avisos.upsert({
-        where: { user_id_business_id: { user_id: userId, business_id: businessId } },
-        create: { user_id: userId, business_id: businessId, ...data },
+        where: { user_id: userId },
+        create: { user_id: userId, ...data },
         update: data,
     });
-    res.json(await configAvisos(userId, businessId));
+    res.json(await configAvisos(userId));
 });
 
 // El celular aceptó notificaciones: se guarda su dirección de push y se
-// encienden los avisos de Tareas para este negocio.
-export const suscribirPush = handler(async (req, res, businessId) => {
-    const userId = Number(req.user.id);
+// encienden sus avisos de Tareas.
+export const suscribirPush = handler(async (req, res, userId) => {
     const s = req.body.suscripcion || {};
     if (!s.endpoint || !/^https:\/\//.test(s.endpoint) || !s.keys?.p256dh || !s.keys?.auth) {
         throw new ErrorTareas(400, 'Suscripción inválida');
@@ -812,27 +812,26 @@ export const suscribirPush = handler(async (req, res, businessId) => {
         update: { user_id: userId, p256dh: s.keys.p256dh, auth: s.keys.auth, dispositivo },
     });
     await prisma.tareas_avisos.upsert({
-        where: { user_id_business_id: { user_id: userId, business_id: businessId } },
-        create: { user_id: userId, business_id: businessId, activo: true },
+        where: { user_id: userId },
+        create: { user_id: userId, activo: true },
         update: { activo: true, updated_at: new Date() },
     });
-    res.json(await configAvisos(userId, businessId));
+    res.json(await configAvisos(userId));
 });
 
-export const desuscribirPush = handler(async (req, res, businessId) => {
-    const userId = Number(req.user.id);
+export const desuscribirPush = handler(async (req, res, userId) => {
     if (req.body.endpoint) {
         await prisma.push_suscripciones.deleteMany({ where: { endpoint: String(req.body.endpoint), user_id: userId } });
     }
-    res.json(await configAvisos(userId, businessId));
+    res.json(await configAvisos(userId));
 });
 
-export const probarPush = handler(async (req, res, businessId) => {
+export const probarPush = handler(async (req, res, userId) => {
     if (!pushDisponible()) throw new ErrorTareas(503, 'Las notificaciones aún no están configuradas en el servidor');
-    const r = await enviarPushAUsuarios([Number(req.user.id)], {
+    const r = await enviarPushAUsuarios([userId], {
         title: '🔔 ¡Listo! Así te llegan los avisos',
         body: 'Te avisaré antes de que venza una tarea y cada mañana con tu día.',
-        url: `/inicio/tareas?negocio=${businessId}`,
+        url: '/inicio/tareas',
         tag: 'prueba',
     });
     if (!r.enviados) throw new ErrorTareas(404, 'No hay ningún dispositivo con notificaciones activas');

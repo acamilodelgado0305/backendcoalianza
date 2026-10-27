@@ -401,7 +401,10 @@ model finanzas_config {
 
 model tareas_tableros {
   id          Int               @id @default(autoincrement())
-  business_id Int
+  /// Dueño: las tareas son del usuario, se ven desde cualquier negocio
+  user_id     Int
+  /// Negocio donde se creó (solo referencia)
+  business_id Int?
   nombre      String            @db.VarChar(120)
   descripcion String?
   color       String            @default("#1d4ed8") @db.VarChar(7)
@@ -417,6 +420,7 @@ model tareas_tableros {
   tarjetas    tareas_tarjetas[]
 
   @@index([business_id], map: "idx_tareas_tableros_business")
+  @@index([user_id], map: "idx_tareas_tableros_user")
 }
 
 model tareas_listas {
@@ -548,10 +552,9 @@ model push_suscripciones {
   @@index([user_id], map: "idx_push_suscripciones_user")
 }
 
-/// Qué avisos de Tareas quiere cada usuario en cada negocio
+/// Qué avisos de Tareas quiere cada usuario
 model tareas_avisos {
-  user_id        Int
-  business_id    Int
+  user_id        Int       @id
   activo         Boolean   @default(true)
   resumen_diario Boolean   @default(true)
   /// Hora de Colombia (0-23) del resumen del día
@@ -559,6 +562,4 @@ model tareas_avisos {
   ultimo_resumen DateTime? @db.Date
   created_at     DateTime? @default(now()) @db.Timestamptz(6)
   updated_at     DateTime? @default(now()) @db.Timestamptz(6)
-
-  @@id([user_id, business_id])
 }
