@@ -470,6 +470,8 @@ model tareas_tarjetas {
   repetida_at      DateTime?                  @db.Timestamptz(6)
   /// id de la primera tarjeta de la serie
   serie_id         Int?
+  /// Orden manual dentro del día en el Resumen (misma escala que vence_at en ms; null = por hora)
+  orden_dia        Float?
   completada       Boolean                    @default(false)
   completada_at    DateTime?                  @db.Timestamptz(6)
   archivada        Boolean                    @default(false)

@@ -479,6 +479,13 @@ export const actualizarTarjeta = handler(async (req, res, duenoId) => {
     }
     // Cambió cuándo avisar: el recordatorio vuelve a quedar pendiente.
     if (vence.vence_at !== undefined || recordatorio !== undefined) data.recordado_at = null;
+    // Orden manual dentro del día (Resumen). Si cambió la fecha u hora, vuelve a ordenarse por hora.
+    if (b.orden_dia !== undefined) {
+        const n = Number(b.orden_dia);
+        data.orden_dia = b.orden_dia === null || !Number.isFinite(n) ? null : n;
+    } else if (vence.vence_at !== undefined) {
+        data.orden_dia = null;
+    }
 
     if (b.completada !== undefined && !!b.completada !== c.completada) {
         data.completada = !!b.completada;
