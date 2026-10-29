@@ -56,7 +56,7 @@ export const createIngreso = async (req, res) => {
 
         const createdAt = fechaDelIngreso(fecha);
         // Etiqueta de color (solo de las de ingresos del negocio).
-        const categoriaId = await resolverEtiqueta(categoria_id, businessId, 'ingreso');
+        const categoriaId = await resolverEtiqueta(categoria_id, businessId);
 
         let personaData = null;
         if (persona_id) {
@@ -532,7 +532,7 @@ export const updateIngreso = async (req, res) => {
 
         // Etiqueta: sin el campo se conserva; con null se quita.
         const categoriaNueva = categoria_id !== undefined
-            ? await resolverEtiqueta(categoria_id, businessId, 'ingreso')
+            ? await resolverEtiqueta(categoria_id, businessId)
             : undefined;
 
         let personaData = null;

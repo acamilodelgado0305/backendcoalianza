@@ -30,7 +30,7 @@ const buscarEgreso = (id, businessId) =>
     });
 
 // Solo se aceptan etiquetas de GASTO del negocio activo. null / '' quita la etiqueta.
-const resolverCategoria = (valor, businessId) => resolverEtiqueta(valor, businessId, 'gasto');
+const resolverCategoria = (valor, businessId) => resolverEtiqueta(valor, businessId);
 
 // ==========================================
 // 1. CREAR EGRESO (CREATE)
@@ -266,13 +266,12 @@ const validarNombre = (valor) => {
     return { nombre };
 };
 
-// Etiqueta del negocio y del tipo con ese nombre (sin distinguir mayúsculas),
-// opcionalmente excluyendo un id. "Ventas" de gasto y de ingreso no chocan.
-const buscarPorNombre = (businessId, nombre, excluirId = null, tipo = 'gasto') =>
+// Etiqueta del negocio con ese nombre (sin distinguir mayúsculas), opcionalmente
+// excluyendo un id. Gastos e ingresos comparten la lista: no hay dos "Ventas".
+const buscarPorNombre = (businessId, nombre, excluirId = null) =>
     prisma.egreso_categorias.findFirst({
         where: {
             business_id: businessId,
-            tipo,
             nombre: { equals: nombre, mode: 'insensitive' },
             ...(excluirId != null && { id: { not: excluirId } }),
         },
@@ -280,16 +279,16 @@ const buscarPorNombre = (businessId, nombre, excluirId = null, tipo = 'gasto') =
     });
 
 const etiquetaDelNegocio = (id, businessId) =>
-    prisma.egreso_categorias.findFirst({ where: { id, business_id: businessId }, select: { id: true, tipo: true } });
+    prisma.egreso_categorias.findFirst({ where: { id, business_id: businessId }, select: { id: true } });
 
 export const getCategoriasEgreso = async (req, res) => {
     try {
         const businessId = req.user?.bid;
         if (!businessId) return res.status(401).json({ message: "No se pudo determinar el negocio activo" });
 
-        // ?tipo=ingreso trae las de ingresos; sin tipo (pantallas viejas), las de gastos.
+        // Una sola lista para gastos e ingresos (se ignora ?tipo de pantallas viejas).
         const categorias = await prisma.egreso_categorias.findMany({
-            where:   { business_id: businessId, tipo: tipoEtiqueta(req.query?.tipo) },
+            where:   { business_id: businessId },
             select:  SELECT_ETIQUETA,
             orderBy: { nombre: 'asc' },
         });
@@ -311,9 +310,9 @@ export const createCategoriaEgreso = async (req, res) => {
         const color = normalizarColor(req.body?.color) || COLOR_ETIQUETA_DEFAULT;
         const tipo = tipoEtiqueta(req.body?.tipo);
 
-        // No se duplican dentro del negocio y del tipo (sin distinguir mayúsculas):
-        // si ya existe, se devuelve esa para que el formulario simplemente la elija.
-        const existente = await buscarPorNombre(businessId, nombre, null, tipo);
+        // No se duplican dentro del negocio (sin distinguir mayúsculas): si ya
+        // existe, se devuelve esa para que el formulario simplemente la elija.
+        const existente = await buscarPorNombre(businessId, nombre);
         if (existente) return res.status(200).json(existente);
 
         try {
@@ -324,7 +323,7 @@ export const createCategoriaEgreso = async (req, res) => {
             return res.status(201).json(categoria);
         } catch (err) {
             // Otra petición la creó al mismo tiempo (índice único): se devuelve esa.
-            const creada = await buscarPorNombre(businessId, nombre, null, tipo);
+            const creada = await buscarPorNombre(businessId, nombre);
             if (creada) return res.status(200).json(creada);
             throw err;
         }
@@ -350,7 +349,7 @@ export const updateCategoriaEgreso = async (req, res) => {
         if (req.body?.nombre !== undefined) {
             const { nombre, error } = validarNombre(req.body.nombre);
             if (error) return res.status(400).json({ message: error });
-            if (await buscarPorNombre(businessId, nombre, id, actual.tipo)) {
+            if (await buscarPorNombre(businessId, nombre, id)) {
                 return res.status(409).json({ message: "Ya existe una etiqueta con ese nombre" });
             }
             data.nombre = nombre;
